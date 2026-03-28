@@ -21,7 +21,7 @@ import { extractCapabilities, hasCapability } from './capabilities.js';
 // of file-system reads at runtime.  This value is injected at build time or
 // kept in sync manually.
 // ---------------------------------------------------------------------------
-const TOOL_VERSION = '0.1.0-alpha';
+const TOOL_VERSION = '0.2.0-alpha';
 
 // Maximum number of tools we page through before stopping (safety cap)
 const TOOLS_CAP = 500;

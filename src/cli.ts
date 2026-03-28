@@ -10,6 +10,7 @@ import { createTransport } from './transport/index.js';
 import { executeProtocol } from './protocol/index.js';
 import { runConformanceChecks } from './validators/conformance/index.js';
 import { computeScores, determineExitCode } from './scoring/index.js';
+import { runSecurityChecks } from './validators/security/index.js';
 import { createReporter } from './reporters/index.js';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,23 @@ export function exitWithError(
 }
 
 // ---------------------------------------------------------------------------
+// Security finding severity counter
+// ---------------------------------------------------------------------------
+
+function countBySeverity(findings: SecurityFinding[]): Record<string, number> {
+  const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const f of findings) {
+    if (!f.suppressed) {
+      const current = counts[f.severity];
+      if (current !== undefined) {
+        counts[f.severity] = current + 1;
+      }
+    }
+  }
+  return counts;
+}
+
+// ---------------------------------------------------------------------------
 // Full verification pipeline
 // ---------------------------------------------------------------------------
 
@@ -64,8 +82,8 @@ async function runVerification(config: VerificationConfig): Promise<void> {
     // 3. Run conformance checks
     const checkResults = runConformanceChecks(exchange, config);
 
-    // 4. Security findings placeholder (Sprint 2)
-    const securityFindings: SecurityFinding[] = [];
+    // 4. Run security checks
+    const securityFindings = runSecurityChecks(exchange, config);
 
     // 5. Compute scores
     const scoring = computeScores(checkResults, securityFindings, config);
@@ -74,7 +92,7 @@ async function runVerification(config: VerificationConfig): Promise<void> {
     // 6. Assemble VerificationResult
     const result: VerificationResult = {
       meta: {
-        toolVersion: '0.1.0-alpha',
+        toolVersion: '0.2.0-alpha',
         specVersion: '2024-11-05',
         timestamp: new Date().toISOString(),
         target: config.target,
@@ -96,7 +114,7 @@ async function runVerification(config: VerificationConfig): Promise<void> {
       summary: {
         pass: exitCode === 0,
         exitCode,
-        blockerCount: { critical: 0, high: 0, medium: 0, low: 0 },
+        blockerCount: countBySeverity(securityFindings),
       },
     };
 
@@ -181,7 +199,7 @@ function buildProgram(): Command {
     )
     // Custom version string (S-1-06)
     .version(
-      'mcp-verify 0.1.0-alpha (validates MCP spec 2024-11-05)',
+      'mcp-verify 0.2.0-alpha (validates MCP spec 2024-11-05)',
       '-V, --version',
       'Output the version number',
     )

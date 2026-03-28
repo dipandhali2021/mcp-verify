@@ -1,5 +1,6 @@
 import type { VerificationResult } from '../types/results.js';
 import type { CheckResult, ConformanceCategory } from '../types/conformance.js';
+import type { Severity } from '../types/security.js';
 import type { Reporter } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -153,6 +154,28 @@ function formatDuration(ms: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Severity tag formatting
+// ---------------------------------------------------------------------------
+
+function severityTag(
+  severity: Severity,
+  color: ReturnType<typeof makeColor>,
+): string {
+  switch (severity) {
+    case 'critical':
+      return color(RED, '[CRITICAL]');
+    case 'high':
+      return color(RED, '[HIGH]');
+    case 'medium':
+      return color(YELLOW, '[MEDIUM]');
+    case 'low':
+      return color(CYAN, '[LOW]');
+    case 'info':
+      return color(DIM, '[INFO]');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // TerminalReporter
 // ---------------------------------------------------------------------------
 
@@ -303,14 +326,40 @@ export class TerminalReporter implements Reporter {
     }
 
     // -----------------------------------------------------------------------
-    // Security findings (Sprint 1 stub)
+    // Security findings
     // -----------------------------------------------------------------------
 
     lines.push(color(BOLD, '=== Security Findings ==='));
     lines.push('');
-    lines.push(
-      `  ${color(DIM, 'No security findings (security engine available in v0.2.0)')}`,
-    );
+
+    const activeFindings = result.security.findings;
+    const suppressedFindings = result.security.suppressed;
+
+    if (activeFindings.length === 0 && suppressedFindings.length === 0) {
+      lines.push(`  ${color(GREEN, '\u2713 No security findings detected')}`);
+    } else {
+      if (activeFindings.length > 0) {
+        for (const finding of activeFindings) {
+          const sevTag = severityTag(finding.severity, color);
+          const confLabel = finding.confidence === 'deterministic'
+            ? color(CYAN, '[deterministic]')
+            : color(YELLOW, '[heuristic]');
+          lines.push(`  ${sevTag} ${confLabel} ${finding.title}`);
+          lines.push(`    ${color(DIM, finding.checkId)} | CVSS ${finding.cvssScore} | ${finding.component}`);
+          lines.push(`    ${finding.description}`);
+          lines.push(`    ${color(GREEN, 'Remediation:')} ${finding.remediation}`);
+          lines.push('');
+        }
+      }
+
+      if (suppressedFindings.length > 0) {
+        lines.push(`  ${color(DIM, `${suppressedFindings.length} suppressed finding(s)`)}`);
+        for (const finding of suppressedFindings) {
+          lines.push(`    ${color(DIM, `[SUPPRESSED] ${finding.checkId}: ${finding.title}`)}`);
+        }
+      }
+    }
+
     lines.push('');
 
     // -----------------------------------------------------------------------

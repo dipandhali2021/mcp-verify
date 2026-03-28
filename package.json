@@ -1,6 +1,6 @@
 {
   "name": "mcp-verify",
-  "version": "0.1.0-alpha",
+  "version": "0.2.0-alpha",
   "description": "Framework-agnostic CLI and GitHub Action that verifies MCP servers for spec conformance, security vulnerabilities, and health metrics",
   "type": "module",
   "main": "dist/cli.js",
