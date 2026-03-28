@@ -1,14 +1,17 @@
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
+export type SecurityConfidence = 'deterministic' | 'heuristic';
+
 export interface SecurityFinding {
-  findingId: string;
-  analyzerName: string;
+  id: string;
+  checkId: string;
   severity: Severity;
+  cvssScore: number;
+  component: string;
   title: string;
   description: string;
-  confidence: 'deterministic' | 'high' | 'medium' | 'low';
-  cvss?: number;
-  remediation?: string;
+  remediation: string;
+  confidence: SecurityConfidence;
   evidence?: Record<string, unknown>;
   suppressed: boolean;
 }
