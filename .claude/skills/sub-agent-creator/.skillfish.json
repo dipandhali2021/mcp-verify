@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "sub-agent-creator",
+  "owner": "cskiro",
+  "repo": "claudex",
+  "path": "plugins/sub-agent-creator/skills/sub-agent-creator",
+  "branch": "main",
+  "sha": "a749162855b491e3c68985127437e5659a3e8689",
+  "source": "manual"
+}

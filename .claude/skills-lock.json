@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "skills": {
+    "excalidraw-diagram-generator": {
+      "source": "dipandhali2021/shipwright",
+      "sourceType": "github",
+      "computedHash": "48103cd2f41d49a8153e4c5d29e034c5788d2d9d7488767da1dc54eeb4114a31"
+    },
+    "gh-cli": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "computedHash": "cbe644b0c6760ae2a1eaafa39133920d889331327065d92a131675a665273e56"
+    },
+    "git-commit": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "computedHash": "2607fc60629b82b257136dd2a7a373f0a4466c0b49df7746d845d59313c99b21"
+    },
+    "github-issues": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "computedHash": "3a752d99ddc3178f443fe242d490800398b2b42030a9d221b298b9486d90cc87"
+    },
+    "pdlc": {
+      "source": "dipandhali2021/shipwright",
+      "sourceType": "local",
+      "computedHash": "cd6ccd4340f37efc5626eb15bdb81b8bec3909f1769ac39ce09fbab59e235c43"
+    },
+    "pr-create": {
+      "source": "dipandhali2021/shipwright",
+      "sourceType": "local",
+      "computedHash": "f740212dba189e1e729552a4ca24b219536133484a3fc90780a0a33a404f2c1c"
+    },
+    "prd": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "computedHash": "1f3e1f005fc40fda85d250ae906c8ee4f7e8e833e23adfeca6542c19609fd7cd"
+    },
+    "remotion-best-practices": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "computedHash": "6f22ccc0dd7103de270a465b30e44b001bcee4751e43197bba60680e69928635"
+    },
+    "roadmap-update": {
+      "source": "dipandhali2021/shipwright",
+      "sourceType": "local",
+      "computedHash": "23cf24bd8bf68c25ff9633275d0347d5f8e1709f0dee032c7985811d8eefa3a1"
+    },
+    "scrum-master": {
+      "source": "dipandhali2021/shipwright",
+      "sourceType": "local",
+      "computedHash": "61749bb81cc7960a8bbbe93c959cb4d2ebee4302600119277f0d794275b38403"
+    },
+    "skill-creator": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "57f470f512f45bdac598e302bc72fd62bf2b649fc7fad032efe97720149cde4d"
+    },
+    "sprint-planning": {
+      "source": "dipandhali2021/shipwright",
+      "sourceType": "local",
+      "computedHash": "a2efa08a1ad6bb3e17a86f723da750504cb8e560206a2f653b0bd45bcbd06e1b"
+    },
+    "sprint-retrospective": {
+      "source": "dipandhali2021/shipwright",
+      "sourceType": "local",
+      "computedHash": "1d798da72d0eac4bb606e45bd173feceb0c850dc8544020fd71c884b14123153"
+    },
+    "standup-meeting": {
+      "source": "dipandhali2021/shipwright",
+      "sourceType": "local",
+      "computedHash": "6dd4290bc37e6cd6f2b62f75161eefaec1a7643b662935f1221ee06cc18d03cd"
+    },
+    "sub-agent-creator": {
+      "source": "cskiro/claudex",
+      "sourceType": "local",
+      "computedHash": "7f818bb3eea0a3bacad7d15d371eedef8e68f36951c92fa937d015baf63326b2"
+    },
+    "task-estimation": {
+      "source": "dipandhali2021/shipwright",
+      "sourceType": "local",
+      "computedHash": "ce663b9af3153f5878db6d111548f255b351a1a20842d9f7e17f32e6ff0f9f0d"
+    }
+  }
+}

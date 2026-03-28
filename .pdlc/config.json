@@ -1,0 +1,122 @@
+{
+  "pdlc_version": "1.0.0",
+  "project_name": "MCP Verify",
+  "project_description": "A framework-agnostic, open-source CLI and GitHub Action that verifies MCP servers for spec conformance, security vulnerabilities, and health metrics.",
+  "created_at": "2026-03-28T10:00:00Z",
+  "updated_at": "2026-03-28T12:00:00Z",
+  "current_phase": "DEVELOPMENT",
+  "current_sprint": 1,
+  "total_planned_sprints": 4,
+  "tech_stack": {
+    "project_type": "CLI Tool",
+    "primary_language": "TypeScript",
+    "framework": "Commander.js",
+    "database": "none",
+    "deployment_target": "npm + GitHub Action",
+    "assigned_agents": [
+      "cli-developer",
+      "typescript-pro",
+      "backend-developer",
+      "devops-engineer",
+      "security-engineer",
+      "frontend-developer"
+    ]
+  },
+  "phase_history": [
+    {
+      "phase": "RESEARCH",
+      "started_at": "2026-03-28T10:00:00Z",
+      "completed_at": "2026-03-28T10:00:00Z",
+      "agents_invoked": ["user-provided"],
+      "artifacts_produced": ["research/project-selection.md"],
+      "outcome": "success",
+      "notes": "Research provided via PROJECT_BRIEF.md with competitive landscape analysis"
+    },
+    {
+      "phase": "PLANNING",
+      "started_at": "2026-03-28T10:00:00Z",
+      "completed_at": "2026-03-28T11:30:00Z",
+      "agents_invoked": [
+        "product-manager",
+        "business-analyst",
+        "ux-researcher",
+        "project-manager",
+        "scrum-master",
+        "technical-writer"
+      ],
+      "artifacts_produced": [
+        "architecture/product-vision.md",
+        "architecture/requirements.md",
+        "architecture/user-personas.md",
+        "architecture/project-plan.md",
+        "architecture/sprint-structure.md",
+        "architecture/product-spec.md",
+        "architecture/roadmap.md"
+      ],
+      "outcome": "success",
+      "notes": "Full planning suite produced: 80 FRs, 24 NFRs, 24 user stories, 4-sprint plan with 91 stories, Now/Next/Later roadmap"
+    },
+    {
+      "phase": "DESIGN",
+      "started_at": "2026-03-28T11:30:00Z",
+      "completed_at": "2026-03-28T12:00:00Z",
+      "agents_invoked": [
+        "cloud-architect",
+        "api-designer",
+        "security-engineer",
+        "architect-reviewer"
+      ],
+      "artifacts_produced": [
+        "architecture/system-design.md",
+        "architecture/api-spec.md",
+        "architecture/security-design.md",
+        "architecture/tech-stack-decision.md",
+        "architecture/adr/001-initial-architecture-review.md"
+      ],
+      "outcome": "success",
+      "notes": "Architecture review score: 8.7/10. Key action items: unify SecurityFinding interface, unify CheckResult interface, add 'info' severity level, add skip flags to config type. Pipeline architecture validated."
+    }
+  ],
+  "sprint_history": [],
+  "self_improvement": {
+    "total_lessons_learned": 0,
+    "agent_performance_scores": {},
+    "estimation_calibration_factor": 1.0,
+    "recommended_changes": []
+  },
+  "external_skills": {
+    "sprint-planning": true,
+    "scrum-master": true,
+    "task-estimation": true,
+    "standup-meeting": true,
+    "sprint-retrospective": true,
+    "roadmap-update": true,
+    "remotion-best-practices": true,
+    "git-commit": true,
+    "github-issues": true,
+    "gh-cli": true,
+    "pr-create": true,
+    "prd": true,
+    "excalidraw-diagram-generator": true
+  },
+  "execution_mode": "subagent",
+  "agent_teams": {
+    "available": false,
+    "env_var_set": false,
+    "tools_available": false,
+    "phases_using_teams": [],
+    "fallback_count": 0
+  },
+  "role_hierarchy": {
+    "manager": "pdlc-orchestrator",
+    "product_manager": "product-manager",
+    "engineers": [
+      "cli-developer",
+      "typescript-pro",
+      "backend-developer",
+      "devops-engineer",
+      "security-engineer",
+      "frontend-developer"
+    ]
+  }
+}
