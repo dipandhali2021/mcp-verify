@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "1.0",
+  "meta": {
+    "toolVersion": "0.2.0-alpha",
+    "specVersion": "2024-11-05",
+    "timestamp": "2026-03-29T12:00:00.000Z",
+    "target": "https://example.com/mcp",
+    "transport": "http",
+    "durationMs": 342,
+    "checkMode": "balanced",
+    "thresholds": {
+      "conformanceThreshold": 80,
+      "failOnSeverity": "critical"
+    }
+  },
+  "conformance": {
+    "score": 85,
+    "breakdown": {
+      "jsonrpc-base": 100,
+      "initialization": 90,
+      "tools": 80,
+      "resources": 75,
+      "prompts": 100,
+      "transport": 100,
+      "error-handling": 0
+    },
+    "violations": [
+      {
+        "checkId": "TOOLS-004",
+        "name": "Tool Input Schema Required",
+        "category": "tools",
+        "level": "warning",
+        "description": "Tool 'search' is missing the required 'inputSchema' property.",
+        "specVersion": "2024-11-05",
+        "specReference": "https://spec.modelcontextprotocol.io/specification/basic/tools/",
+        "field": "tools[1].inputSchema",
+        "confidence": "deterministic"
+      },
+      {
+        "checkId": "INIT-002",
+        "name": "Server Capabilities Declared",
+        "category": "initialization",
+        "level": "warning",
+        "description": "Server declared 'logging' capability but did not list any log levels.",
+        "specVersion": "2024-11-05",
+        "specReference": "https://spec.modelcontextprotocol.io/specification/basic/lifecycle/",
+        "confidence": "high"
+      }
+    ]
+  },
+  "security": {
+    "findings": [
+      {
+        "id": "SEC-001",
+        "checkId": "SEC-CORS-001",
+        "severity": "high",
+        "cvssScore": 8.1,
+        "component": "HTTP transport headers",
+        "title": "CORS Wildcard Policy",
+        "description": "The server sets 'Access-Control-Allow-Origin: *', permitting any origin to make cross-site requests.",
+        "remediation": "Restrict the CORS origin to known client origins instead of using a wildcard.",
+        "confidence": "deterministic",
+        "suppressed": false,
+        "evidence": {
+          "header": "Access-Control-Allow-Origin",
+          "value": "*"
+        }
+      }
+    ],
+    "suppressed": [
+      {
+        "id": "SEC-002",
+        "checkId": "SEC-AUTH-001",
+        "severity": "medium",
+        "cvssScore": 5.3,
+        "component": "initialize response",
+        "title": "No Authentication Mechanism Advertised",
+        "description": "The server does not advertise any authentication requirement in its capabilities.",
+        "remediation": "Implement and advertise an authentication mechanism via server capabilities.",
+        "confidence": "heuristic",
+        "suppressed": true
+      }
+    ]
+  },
+  "summary": {
+    "pass": false,
+    "exitCode": 1,
+    "blockerCount": {
+      "critical": 0,
+      "high": 1,
+      "medium": 0,
+      "low": 0
+    }
+  }
+}
