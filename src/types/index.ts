@@ -6,3 +6,4 @@ export * from './config.js';
 export * from './conformance.js';
 export * from './security.js';
 export * from './results.js';
+export type { HistoryRecord } from '../history/types.js';

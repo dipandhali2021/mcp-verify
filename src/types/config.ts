@@ -15,6 +15,8 @@ export interface VerificationConfig {
   noColor: boolean;
   verbose: boolean;
   output: string | null;
+  /** When true, the verification run will not be persisted to history storage. */
+  noHistory: boolean;
 }
 
 export const DEFAULT_CONFIG: Omit<VerificationConfig, 'target'> = {
@@ -29,4 +31,5 @@ export const DEFAULT_CONFIG: Omit<VerificationConfig, 'target'> = {
   noColor: false,
   verbose: false,
   output: null,
+  noHistory: false,
 };

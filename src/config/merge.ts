@@ -137,5 +137,11 @@ export function mergeConfig(
         : fileConfig?.output !== undefined
           ? fileConfig.output
           : DEFAULT_CONFIG.output,
+
+    // noHistory — not present in config file; sourced from CLI or default
+    noHistory:
+      cliOptions.noHistory !== undefined
+        ? cliOptions.noHistory
+        : DEFAULT_CONFIG.noHistory,
   };
 }

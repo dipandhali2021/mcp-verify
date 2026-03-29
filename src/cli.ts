@@ -14,6 +14,8 @@ import { computeScores, determineExitCode } from './scoring/index.js';
 import { runSecurityChecks } from './validators/security/index.js';
 import { createReporter } from './reporters/index.js';
 import { loadConfigFile, mergeConfig } from './config/index.js';
+import { HistoryStorage } from './history/index.js';
+import type { HistoryRecord } from './history/index.js';
 
 // ---------------------------------------------------------------------------
 // Exit codes
@@ -149,7 +151,22 @@ async function runVerification(config: VerificationConfig): Promise<void> {
       process.stdout.write(output + '\n');
     }
 
-    // 8. Exit with appropriate code
+    // 8. Persist run to history (unless --no-history was set)
+    if (!config.noHistory) {
+      const historyRecord: HistoryRecord = {
+        timestamp: result.meta.timestamp,
+        target: config.target,
+        conformanceScore: result.conformance.score,
+        securityFindingsCount: result.security.findings.length,
+        breakdown: result.conformance.breakdown,
+        toolVersion: result.meta.toolVersion,
+        specVersion: result.meta.specVersion,
+      };
+      const historyStorage = new HistoryStorage();
+      historyStorage.appendRun(config.target, historyRecord);
+    }
+
+    // 9. Exit with appropriate code
     process.exit(exitCode);
   } finally {
     await transport.close();
@@ -318,6 +335,7 @@ Examples:
       parseConformanceThreshold,
       DEFAULT_CONFIG.conformanceThreshold,
     )
+    .option('--no-history', 'Skip saving this run to history storage')
     .addHelpText(
       'after',
       `
@@ -346,6 +364,7 @@ Examples:
         transport?: 'http' | 'stdio';
         failOnSeverity: 'critical' | 'high' | 'medium' | 'low' | 'none';
         conformanceThreshold: number;
+        history: boolean;
       },
     ) => {
       // Mutual exclusion: --strict and --lenient cannot both be set
@@ -374,6 +393,8 @@ Examples:
         format: options.format,
         failOnSeverity: options.failOnSeverity,
         conformanceThreshold: options.conformanceThreshold,
+        // Commander's --no-history sets options.history = false; absence = true.
+        noHistory: !options.history,
       };
 
       if (checkMode !== undefined) {
