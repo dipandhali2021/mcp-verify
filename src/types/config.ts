@@ -6,6 +6,11 @@ export interface VerificationConfig {
   failOnSeverity: 'critical' | 'high' | 'medium' | 'low' | 'none';
   conformanceThreshold: number;
   skip: string[];
+  /**
+   * Maps checkId → justification string for skipped checks.
+   * Populated from SkipEntry objects in the config file.
+   */
+  skipJustifications: Record<string, string>;
   checkMode: 'strict' | 'balanced' | 'lenient';
   noColor: boolean;
   verbose: boolean;
@@ -19,6 +24,7 @@ export const DEFAULT_CONFIG: Omit<VerificationConfig, 'target'> = {
   failOnSeverity: 'critical',
   conformanceThreshold: 0,
   skip: [],
+  skipJustifications: {},
   checkMode: 'balanced',
   noColor: false,
   verbose: false,
