@@ -224,7 +224,7 @@ async function runVerification(
     // 6. Assemble VerificationResult
     const result: VerificationResult = {
       meta: {
-        toolVersion: '1.2.0',
+        toolVersion: '1.2.1',
         specVersion: '2024-11-05',
         timestamp: new Date().toISOString(),
         target: config.target,
@@ -486,7 +486,7 @@ export function buildProgram(): Command {
     )
     // Custom version string
     .version(
-      'mcp-verify 1.2.0 (validates MCP spec 2024-11-05)',
+      'mcp-verify 1.2.1 (validates MCP spec 2024-11-05)',
       '-V, --version',
       'Output the version number',
     )
@@ -894,7 +894,7 @@ Examples:
 
       const exportPayload = {
         exportedAt: new Date().toISOString(),
-        toolVersion: '1.2.0',
+        toolVersion: '1.2.1',
         targets: targetsExported,
         runs: records,
       };
