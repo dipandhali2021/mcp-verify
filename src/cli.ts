@@ -1,4 +1,5 @@
 import { Command, InvalidArgumentError } from 'commander';
+import { writeFileSync } from 'node:fs';
 import { DEFAULT_CONFIG } from './types/index.js';
 import type {
   VerificationConfig,
@@ -12,6 +13,7 @@ import { runConformanceChecks } from './validators/conformance/index.js';
 import { computeScores, determineExitCode } from './scoring/index.js';
 import { runSecurityChecks } from './validators/security/index.js';
 import { createReporter } from './reporters/index.js';
+import { loadConfigFile, mergeConfig } from './config/index.js';
 
 // ---------------------------------------------------------------------------
 // Exit codes
@@ -92,7 +94,7 @@ async function runVerification(config: VerificationConfig): Promise<void> {
     // 6. Assemble VerificationResult
     const result: VerificationResult = {
       meta: {
-        toolVersion: '0.2.0-alpha',
+        toolVersion: '1.0.0',
         specVersion: '2024-11-05',
         timestamp: new Date().toISOString(),
         target: config.target,
@@ -120,8 +122,32 @@ async function runVerification(config: VerificationConfig): Promise<void> {
 
     // 7. Format and output
     const reporter = createReporter(config);
-    const output = reporter.format(result);
-    process.stdout.write(output + '\n');
+
+    if (config.output !== null) {
+      // Write the formatted report (in requested format) to the output file
+      const fileReport = reporter.format(result);
+      try {
+        writeFileSync(config.output, fileReport, 'utf-8');
+      } catch (err: unknown) {
+        exitWithError(
+          `Failed to write output file "${config.output}": ${err instanceof Error ? err.message : String(err)}`,
+          config.verbose,
+          err,
+        );
+      }
+
+      // When format is NOT 'terminal', also print a terminal summary to stdout
+      if (config.format !== 'terminal') {
+        const { TerminalReporter } = await import('./reporters/terminal.js');
+        const terminalReporter = new TerminalReporter(config.noColor);
+        process.stdout.write(terminalReporter.format(result) + '\n');
+      }
+      // When format IS 'terminal', the file is the report — no separate stdout output
+    } else {
+      // Default: print the formatted report to stdout
+      const output = reporter.format(result);
+      process.stdout.write(output + '\n');
+    }
 
     // 8. Exit with appropriate code
     process.exit(exitCode);
@@ -134,7 +160,7 @@ async function runVerification(config: VerificationConfig): Promise<void> {
 // Argument parsers / validators
 // ---------------------------------------------------------------------------
 
-function parseTimeout(value: string): number {
+export function parseTimeout(value: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new InvalidArgumentError(
@@ -144,7 +170,7 @@ function parseTimeout(value: string): number {
   return parsed;
 }
 
-function parseFormat(
+export function parseFormat(
   value: string,
 ): 'terminal' | 'json' | 'markdown' | 'sarif' {
   const allowed = ['terminal', 'json', 'markdown', 'sarif'] as const;
@@ -154,6 +180,38 @@ function parseFormat(
     );
   }
   return value as 'terminal' | 'json' | 'markdown' | 'sarif';
+}
+
+export function parseTransport(value: string): 'http' | 'stdio' {
+  const allowed = ['http', 'stdio'] as const;
+  if (!(allowed as readonly string[]).includes(value)) {
+    throw new InvalidArgumentError(
+      `--transport must be one of: ${allowed.join(', ')} (got: ${value})`,
+    );
+  }
+  return value as 'http' | 'stdio';
+}
+
+export function parseFailOnSeverity(
+  value: string,
+): 'critical' | 'high' | 'medium' | 'low' | 'none' {
+  const allowed = ['critical', 'high', 'medium', 'low', 'none'] as const;
+  if (!(allowed as readonly string[]).includes(value)) {
+    throw new InvalidArgumentError(
+      `--fail-on-severity must be one of: ${allowed.join(', ')} (got: ${value})`,
+    );
+  }
+  return value as 'critical' | 'high' | 'medium' | 'low' | 'none';
+}
+
+export function parseConformanceThreshold(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 100) {
+    throw new InvalidArgumentError(
+      `--conformance-threshold must be an integer between 0 and 100 (got: ${value})`,
+    );
+  }
+  return parsed;
 }
 
 // ---------------------------------------------------------------------------
@@ -189,7 +247,7 @@ function applyExitOverride(cmd: Command): void {
 // CLI program builder
 // ---------------------------------------------------------------------------
 
-function buildProgram(): Command {
+export function buildProgram(): Command {
   const program = new Command();
 
   program
@@ -197,9 +255,9 @@ function buildProgram(): Command {
     .description(
       'Verify MCP servers for spec conformance, security vulnerabilities, and health metrics',
     )
-    // Custom version string (S-1-06)
+    // Custom version string
     .version(
-      'mcp-verify 0.2.0-alpha (validates MCP spec 2024-11-05)',
+      'mcp-verify 1.0.0 (validates MCP spec 2024-11-05)',
       '-V, --version',
       'Output the version number',
     )
@@ -232,6 +290,34 @@ Examples:
       parseFormat,
       DEFAULT_CONFIG.format,
     )
+    .option(
+      '--config <path>',
+      'Path to config file (default: auto-discover mcp-verify.json or .mcp-verify.json)',
+    )
+    .option('--strict', 'Set check mode to strict')
+    .option('--lenient', 'Set check mode to lenient')
+    .option('--verbose', 'Enable verbose output')
+    .option(
+      '--output <path>',
+      'Write formatted report to file instead of stdout',
+    )
+    .option(
+      '--transport <type>',
+      'Force transport type: http | stdio',
+      parseTransport,
+    )
+    .option(
+      '--fail-on-severity <level>',
+      'Minimum severity level to fail on: critical | high | medium | low | none',
+      parseFailOnSeverity,
+      DEFAULT_CONFIG.failOnSeverity,
+    )
+    .option(
+      '--conformance-threshold <score>',
+      'Minimum conformance score (0–100)',
+      parseConformanceThreshold,
+      DEFAULT_CONFIG.conformanceThreshold,
+    )
     .addHelpText(
       'after',
       `
@@ -252,15 +338,59 @@ Examples:
         timeout: number;
         color: boolean;
         format: 'terminal' | 'json' | 'markdown' | 'sarif';
+        config?: string;
+        strict?: boolean;
+        lenient?: boolean;
+        verbose?: boolean;
+        output?: string;
+        transport?: 'http' | 'stdio';
+        failOnSeverity: 'critical' | 'high' | 'medium' | 'low' | 'none';
+        conformanceThreshold: number;
       },
     ) => {
-      const config: VerificationConfig = {
-        ...DEFAULT_CONFIG,
-        target,
+      // Mutual exclusion: --strict and --lenient cannot both be set
+      if (options.strict && options.lenient) {
+        process.stderr.write(
+          'Error: --strict and --lenient are mutually exclusive\n',
+        );
+        process.exit(ExitCode.ERROR);
+      }
+
+      // Determine checkMode from flags
+      let checkMode: 'strict' | 'balanced' | 'lenient' | undefined;
+      if (options.strict) {
+        checkMode = 'strict';
+      } else if (options.lenient) {
+        checkMode = 'lenient';
+      }
+
+      // Load config file (auto-discover or explicit path)
+      const fileConfig = loadConfigFile(options.config);
+
+      // Build CLI options partial — only include fields that were explicitly set
+      const cliOptions: Partial<Omit<VerificationConfig, 'target'>> = {
         timeout: options.timeout,
         noColor: !options.color,
         format: options.format,
+        failOnSeverity: options.failOnSeverity,
+        conformanceThreshold: options.conformanceThreshold,
       };
+
+      if (checkMode !== undefined) {
+        cliOptions.checkMode = checkMode;
+      }
+      if (options.verbose === true) {
+        cliOptions.verbose = true;
+      }
+      if (options.output !== undefined) {
+        cliOptions.output = options.output;
+      }
+      if (options.transport !== undefined) {
+        cliOptions.transport = options.transport;
+      }
+
+      // Merge CLI options, file config, and defaults into final config
+      const config = mergeConfig(cliOptions, fileConfig, target);
 
       try {
         await runVerification(config);
@@ -295,11 +425,16 @@ export async function main(argv: string[]): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Module-level entry point
+// Module-level entry point — only executes when run directly (not imported)
 // ---------------------------------------------------------------------------
 
-main(process.argv).catch((err: unknown) => {
-  const message = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`Error: ${message}\n`);
-  process.exit(ExitCode.ERROR);
-});
+const isMain = process.argv[1] !== undefined &&
+  (process.argv[1].endsWith('cli.js') || process.argv[1].endsWith('cli.cjs'));
+
+if (isMain) {
+  main(process.argv).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`Error: ${message}\n`);
+    process.exit(ExitCode.ERROR);
+  });
+}
