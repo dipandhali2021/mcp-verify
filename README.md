@@ -3,7 +3,7 @@
 A framework-agnostic CLI and GitHub Action that verifies [MCP (Model Context Protocol)](https://modelcontextprotocol.io) servers for spec conformance, security vulnerabilities, and health metrics.
 
 ```
-$ npx mcp-verify https://your-mcp-server.com/mcp
+$ npx mcp-server-verify https://your-mcp-server.com/mcp
 
   MCP Verify 1.1.0 — MCP spec 2024-11-05
 
@@ -45,19 +45,19 @@ $ npx mcp-verify https://your-mcp-server.com/mcp
 
 ```bash
 # Verify an HTTP MCP server
-npx mcp-verify https://your-server.com/mcp
+npx mcp-server-verify https://your-server.com/mcp
 
 # Verify a stdio MCP server
-npx mcp-verify stdio://./my-server.js
+npx mcp-server-verify stdio://./my-server.js
 
 # JSON output for CI
-npx mcp-verify https://your-server.com/mcp --format json
+npx mcp-server-verify https://your-server.com/mcp --format json
 
 # Fail CI on high+ severity findings
-npx mcp-verify https://your-server.com/mcp --fail-on-severity high
+npx mcp-server-verify https://your-server.com/mcp --fail-on-severity high
 
 # Require minimum 80% conformance
-npx mcp-verify https://your-server.com/mcp --conformance-threshold 80
+npx mcp-server-verify https://your-server.com/mcp --conformance-threshold 80
 ```
 
 ## Table of Contents
@@ -135,13 +135,13 @@ The [plugin system](#plugin-system) exists to fill these gaps for your specific 
 
 ```bash
 # Run directly (no install needed)
-npx mcp-verify https://your-server.com/mcp
+npx mcp-server-verify https://your-server.com/mcp
 
 # Install globally
-npm install -g mcp-verify
+npm install -g mcp-server-verify
 
 # Install as dev dependency
-npm install --save-dev mcp-verify
+npm install --save-dev mcp-server-verify
 ```
 
 **Requirements:** Node.js 18, 20, or 22 on Linux, macOS, or Windows.
@@ -523,7 +523,7 @@ jobs:
 mcp-verify:
   image: node:20
   script:
-    - npx mcp-verify http://localhost:3000/mcp
+    - npx mcp-server-verify http://localhost:3000/mcp
       --format json
       --output report.json
       --fail-on-severity high
@@ -544,7 +544,7 @@ jobs:
       - run:
           name: Verify MCP server
           command: |
-            npx mcp-verify http://localhost:3000/mcp \
+            npx mcp-server-verify http://localhost:3000/mcp \
               --format json \
               --output report.json \
               --fail-on-severity high

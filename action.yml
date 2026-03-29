@@ -75,7 +75,7 @@ runs:
 
         # Run verification; capture JSON to file; allow non-zero exit here
         # shellcheck disable=SC2086
-        npx --yes mcp-verify@latest "${MCP_TARGET}" \
+        npx --yes mcp-server-verify@latest "${MCP_TARGET}" \
           --format json \
           --fail-on-severity "${MCP_FAIL_ON_SEVERITY}" \
           --conformance-threshold "${MCP_CONFORMANCE_THRESHOLD}" \
@@ -195,7 +195,7 @@ runs:
         else
           # Re-run with the requested display format (terminal or markdown)
           # shellcheck disable=SC2086
-          npx --yes mcp-verify@latest "${MCP_TARGET}" \
+          npx --yes mcp-server-verify@latest "${MCP_TARGET}" \
             --format "${MCP_FORMAT}" \
             --fail-on-severity "${MCP_FAIL_ON_SEVERITY}" \
             --conformance-threshold "${MCP_CONFORMANCE_THRESHOLD}" \
@@ -254,7 +254,7 @@ runs:
         REPORT_FILE="${TMPDIR}/mcp-verify-report-${GH_RUN_ID:-local}-${GH_JOB:-default}.md"
 
         # shellcheck disable=SC2086
-        npx --yes mcp-verify@latest "${MCP_TARGET}" \
+        npx --yes mcp-server-verify@latest "${MCP_TARGET}" \
           --format markdown \
           --fail-on-severity "${MCP_FAIL_ON_SEVERITY}" \
           --conformance-threshold "${MCP_CONFORMANCE_THRESHOLD}" \
