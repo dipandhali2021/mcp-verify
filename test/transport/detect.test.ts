@@ -95,12 +95,24 @@ describe('isNpmPackage', () => {
     expect(isNpmPackage('trigger.dev@3.0.0')).toBe(true);
   });
 
+  it('detects bare package name with hyphens: edgeone-pages-mcp', () => {
+    expect(isNpmPackage('edgeone-pages-mcp')).toBe(true);
+  });
+
+  it('detects bare package name: mcp-server-fetch', () => {
+    expect(isNpmPackage('mcp-server-fetch')).toBe(true);
+  });
+
+  it('detects bare package name: browser-tools-mcp', () => {
+    expect(isNpmPackage('browser-tools-mcp')).toBe(true);
+  });
+
   // Negative cases — should NOT be detected as npm packages
-  it('rejects npx command', () => {
+  it('rejects npx command (has spaces)', () => {
     expect(isNpmPackage('npx trigger.dev@latest mcp')).toBe(false);
   });
 
-  it('rejects node command', () => {
+  it('rejects node command (has spaces)', () => {
     expect(isNpmPackage('node server.js')).toBe(false);
   });
 
@@ -116,11 +128,27 @@ describe('isNpmPackage', () => {
     expect(isNpmPackage('server.js')).toBe(false);
   });
 
-  it('rejects plain command without version', () => {
-    expect(isNpmPackage('my-server')).toBe(false);
+  it('rejects single word without hyphens (system command)', () => {
+    expect(isNpmPackage('python')).toBe(false);
+  });
+
+  it('rejects single word without hyphens: node', () => {
+    expect(isNpmPackage('node')).toBe(false);
+  });
+
+  it('rejects single word without hyphens: git', () => {
+    expect(isNpmPackage('git')).toBe(false);
   });
 
   it('rejects empty string', () => {
     expect(isNpmPackage('')).toBe(false);
+  });
+
+  it('rejects Windows backslash path', () => {
+    expect(isNpmPackage('\\usr\\bin\\server')).toBe(false);
+  });
+
+  it('rejects tilde path', () => {
+    expect(isNpmPackage('~/bin/mcp-server')).toBe(false);
   });
 });

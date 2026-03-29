@@ -32,6 +32,8 @@ export class StdioTransport implements Transport {
   private readonly timings: MessageTiming[] = [];
   private firstJsonSeen = false;
   private closed = false;
+  private npxFallbackAttempted = false;
+  private originalParts: string[] = [];
 
   constructor(target: string, timeout: number, verbose = false) {
     // Strip the stdio:// prefix if present to get the command/path
@@ -52,10 +54,19 @@ export class StdioTransport implements Transport {
     const raw = this.executablePath.trim();
 
     // Auto-detect npm packages and prepend npx.
-    // Matches: @scope/pkg, @scope/pkg@version, pkg@version
     const normalized = isNpmPackage(raw) ? `npx --yes ${raw}` : raw;
 
     const parts = normalized.split(/\s+/);
+    this.originalParts = raw.split(/\s+/);
+
+    this.spawnWithArgs(parts);
+  }
+
+  /**
+   * Spawn a child process from a command + args array, attaching all handlers.
+   * If the command is not found (ENOENT), retries once with `npx --yes`.
+   */
+  private spawnWithArgs(parts: string[]): void {
     const firstPart = parts[0] ?? '';
     const ext = extname(firstPart).toLowerCase();
 
@@ -63,11 +74,10 @@ export class StdioTransport implements Transport {
     let args: string[];
 
     if (parts.length > 1) {
-      // Multi-word command (e.g., "npx trigger.dev@latest mcp", "node server.js")
       command = firstPart;
       args = parts.slice(1);
     } else if (ext === '.js' || ext === '.ts') {
-      command = process.execPath; // current Node.js binary
+      command = process.execPath;
       args = [firstPart];
     } else {
       command = firstPart;
@@ -76,6 +86,7 @@ export class StdioTransport implements Transport {
 
     this.process = spawn(command, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      shell: process.platform === 'win32',
     }) as ChildProcessWithoutNullStreams;
 
     this.process.stdout.on('data', (chunk: Buffer) => {
@@ -89,8 +100,15 @@ export class StdioTransport implements Transport {
       });
     }
 
-    this.process.on('error', (err: Error) => {
-      this.rejectAll(err);
+    this.process.on('error', (err: NodeJS.ErrnoException) => {
+      // If command not found, retry with npx (npm package fallback)
+      if (err.code === 'ENOENT' && !this.npxFallbackAttempted) {
+        this.npxFallbackAttempted = true;
+        this.process = null;
+        this.spawnWithArgs(['npx', '--yes', ...this.originalParts]);
+        return;
+      }
+      this.rejectAll(err as Error);
     });
 
     this.process.on('exit', (code: number | null) => {
@@ -298,23 +316,36 @@ export class StdioTransport implements Transport {
  *   @scope/pkg            — scoped package
  *   @scope/pkg@1.2.0      — scoped package with version
  *   some-pkg@1.2.0        — unscoped package with explicit version
+ *   edgeone-pages-mcp     — bare package name (contains hyphen, no path chars)
  *
  * Does NOT match (treated as commands/paths):
- *   npx something         — already a command
- *   node server.js        — already a command
+ *   npx something         — already a command (has spaces)
+ *   node server.js        — already a command (has spaces)
  *   ./local-binary        — relative path
  *   /usr/bin/server       — absolute path
  *   server.js             — file with extension
+ *   python                — single word without hyphens (likely system command)
  */
 export function isNpmPackage(target: string): boolean {
+  // Multi-word = already a command, not a package name
+  if (target.includes(' ')) return false;
+
+  // Path-like targets
+  if (/^[./\\~]/.test(target)) return false;
+
   // Scoped package: @scope/pkg or @scope/pkg@version
-  if (/^@[\w.-]+\/[\w.-]+/.test(target)) {
+  if (/^@[\w.-]+\/[\w.-]+/.test(target)) return true;
+
+  // Unscoped package with explicit version: pkg@version
+  if (/^[\w.-]+@/.test(target) && !target.includes('/') && !target.includes('\\')) return true;
+
+  // Bare npm package name: lowercase, contains at least one hyphen, no file extension.
+  // This catches: edgeone-pages-mcp, mcp-server-fetch, browser-tools-mcp, etc.
+  // Single words without hyphens (node, python, git) are left as system commands.
+  if (/^[a-z][\w.-]*$/.test(target) && target.includes('-') && !/\.\w{1,4}$/.test(target)) {
     return true;
   }
-  // Unscoped package with explicit version: pkg@version (but not a path)
-  if (/^[\w.-]+@[\d]/.test(target) && !target.includes('/') && !target.includes('\\')) {
-    return true;
-  }
+
   return false;
 }
 
