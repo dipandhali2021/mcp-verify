@@ -17,6 +17,8 @@ export interface VerificationConfig {
   output: string | null;
   /** When true, the verification run will not be persisted to history storage. */
   noHistory: boolean;
+  /** Custom HTTP headers to include with requests (e.g., Authorization). */
+  headers: Record<string, string>;
 }
 
 export const DEFAULT_CONFIG: Omit<VerificationConfig, 'target'> = {
@@ -32,4 +34,5 @@ export const DEFAULT_CONFIG: Omit<VerificationConfig, 'target'> = {
   verbose: false,
   output: null,
   noHistory: false,
+  headers: {},
 };

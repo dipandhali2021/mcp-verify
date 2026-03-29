@@ -44,6 +44,7 @@ export interface ConfigFile {
   checkMode?: 'strict' | 'balanced' | 'lenient';
   verbose?: boolean;
   output?: string | null;
+  headers?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------

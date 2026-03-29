@@ -34,7 +34,7 @@ export class StdioTransport implements Transport {
   private closed = false;
 
   constructor(target: string, timeout: number, verbose = false) {
-    // Strip the stdio:// prefix to get the real path
+    // Strip the stdio:// prefix if present to get the command/path
     this.executablePath = target.replace(/^stdio:\/\//, '');
     this.timeout = timeout;
     this.verbose = verbose;
@@ -49,17 +49,28 @@ export class StdioTransport implements Transport {
       return;
     }
 
-    const filePath = this.executablePath;
-    const ext = extname(filePath).toLowerCase();
+    const raw = this.executablePath.trim();
+
+    // Auto-detect npm packages and prepend npx.
+    // Matches: @scope/pkg, @scope/pkg@version, pkg@version
+    const normalized = isNpmPackage(raw) ? `npx --yes ${raw}` : raw;
+
+    const parts = normalized.split(/\s+/);
+    const firstPart = parts[0] ?? '';
+    const ext = extname(firstPart).toLowerCase();
 
     let command: string;
     let args: string[];
 
-    if (ext === '.js' || ext === '.ts') {
+    if (parts.length > 1) {
+      // Multi-word command (e.g., "npx trigger.dev@latest mcp", "node server.js")
+      command = firstPart;
+      args = parts.slice(1);
+    } else if (ext === '.js' || ext === '.ts') {
       command = process.execPath; // current Node.js binary
-      args = [filePath];
+      args = [firstPart];
     } else {
-      command = filePath;
+      command = firstPart;
       args = [];
     }
 
@@ -278,6 +289,33 @@ export class StdioTransport implements Transport {
       pending.reject(err);
     }
   }
+}
+
+/**
+ * Detect whether a target string looks like an npm package reference.
+ *
+ * Matches:
+ *   @scope/pkg            — scoped package
+ *   @scope/pkg@1.2.0      — scoped package with version
+ *   some-pkg@1.2.0        — unscoped package with explicit version
+ *
+ * Does NOT match (treated as commands/paths):
+ *   npx something         — already a command
+ *   node server.js        — already a command
+ *   ./local-binary        — relative path
+ *   /usr/bin/server       — absolute path
+ *   server.js             — file with extension
+ */
+export function isNpmPackage(target: string): boolean {
+  // Scoped package: @scope/pkg or @scope/pkg@version
+  if (/^@[\w.-]+\/[\w.-]+/.test(target)) {
+    return true;
+  }
+  // Unscoped package with explicit version: pkg@version (but not a path)
+  if (/^[\w.-]+@[\d]/.test(target) && !target.includes('/') && !target.includes('\\')) {
+    return true;
+  }
+  return false;
 }
 
 function isJsonRpcResponse(value: unknown): value is JsonRpcResponse {

@@ -143,5 +143,11 @@ export function mergeConfig(
       cliOptions.noHistory !== undefined
         ? cliOptions.noHistory
         : DEFAULT_CONFIG.noHistory,
+
+    // headers — shallow merge: file headers as base, CLI headers override per-name
+    headers: {
+      ...(fileConfig?.headers ?? {}),
+      ...(cliOptions.headers ?? {}),
+    } as Record<string, string>,
   };
 }

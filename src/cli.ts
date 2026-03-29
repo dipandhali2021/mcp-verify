@@ -146,7 +146,7 @@ async function runVerification(
     // 6. Assemble VerificationResult
     const result: VerificationResult = {
       meta: {
-        toolVersion: '1.1.0',
+        toolVersion: '1.2.0',
         specVersion: '2024-11-05',
         timestamp: new Date().toISOString(),
         target: config.target,
@@ -345,6 +345,26 @@ export function parsePort(value: string): number {
   return parsed;
 }
 
+export function parseHeader(
+  value: string,
+  previous: Record<string, string>,
+): Record<string, string> {
+  const colonIndex = value.indexOf(':');
+  if (colonIndex === -1) {
+    throw new InvalidArgumentError(
+      `--header must be in "Name: Value" format (got: ${value})`,
+    );
+  }
+  const name = value.slice(0, colonIndex).trim();
+  const headerValue = value.slice(colonIndex + 1).trim();
+  if (name.length === 0) {
+    throw new InvalidArgumentError(
+      `--header name must not be empty (got: ${value})`,
+    );
+  }
+  return { ...previous, [name]: headerValue };
+}
+
 // ---------------------------------------------------------------------------
 // Shared exitOverride handler
 // Maps Commander's internal error/help/version exits to our ExitCode enum.
@@ -388,7 +408,7 @@ export function buildProgram(): Command {
     )
     // Custom version string
     .version(
-      'mcp-verify 1.1.0 (validates MCP spec 2024-11-05)',
+      'mcp-verify 1.2.0 (validates MCP spec 2024-11-05)',
       '-V, --version',
       'Output the version number',
     )
@@ -458,6 +478,12 @@ Examples:
       '--compare-previous',
       'After verification, compare with immediately previous run (bypasses baseline)',
     )
+    .option(
+      '-H, --header <key:value>',
+      'Custom HTTP header in "Name: Value" format (repeatable)',
+      parseHeader,
+      {},
+    )
     .addHelpText(
       'after',
       `
@@ -467,7 +493,7 @@ Examples:
   mcp-verify verify ./my-server --timeout 30000
   mcp-verify verify https://example.com/mcp --no-color --format sarif
   mcp-verify verify https://example.com/mcp --compare-last
-  mcp-verify verify https://example.com/mcp --compare-previous
+  mcp-verify verify https://example.com/mcp -H "Authorization: Bearer <token>"
 `,
     );
 
@@ -491,6 +517,7 @@ Examples:
         history: boolean;
         compareLast?: boolean;
         comparePrevious?: boolean;
+        header: Record<string, string>;
       },
     ) => {
       // Mutual exclusion: --strict and --lenient cannot both be set
@@ -534,6 +561,9 @@ Examples:
       }
       if (options.transport !== undefined) {
         cliOptions.transport = options.transport;
+      }
+      if (Object.keys(options.header).length > 0) {
+        cliOptions.headers = options.header;
       }
 
       // Merge CLI options, file config, and defaults into final config
@@ -606,6 +636,12 @@ Examples:
       parseConformanceThreshold,
       DEFAULT_CONFIG.conformanceThreshold,
     )
+    .option(
+      '-H, --header <key:value>',
+      'Custom HTTP header in "Name: Value" format (repeatable)',
+      parseHeader,
+      {},
+    )
     .addHelpText(
       'after',
       `
@@ -633,6 +669,7 @@ Examples:
         transport?: 'http' | 'stdio';
         failOnSeverity: 'critical' | 'high' | 'medium' | 'low' | 'none';
         conformanceThreshold: number;
+        header: Record<string, string>;
       },
     ) => {
       if (options.existing === true) {
@@ -699,6 +736,9 @@ Examples:
       }
       if (options.transport !== undefined) {
         cliOptions.transport = options.transport;
+      }
+      if (Object.keys(options.header).length > 0) {
+        cliOptions.headers = options.header;
       }
 
       const config = mergeConfig(cliOptions, fileConfig, target);
@@ -776,7 +816,7 @@ Examples:
 
       const exportPayload = {
         exportedAt: new Date().toISOString(),
-        toolVersion: '1.1.0',
+        toolVersion: '1.2.0',
         targets: targetsExported,
         runs: records,
       };

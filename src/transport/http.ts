@@ -18,6 +18,7 @@ import { parseSseBody } from './sse-parser.js';
 export class HttpTransport implements Transport {
   private readonly url: string;
   private readonly timeout: number;
+  private readonly customHeaders: Record<string, string>;
 
   // Per-request headers captured for metadata
   private readonly capturedHeaders: Record<string, Record<string, string>> = {};
@@ -25,9 +26,10 @@ export class HttpTransport implements Transport {
   private readonly timings: MessageTiming[] = [];
   private readonly activeSockets: Set<http.ClientRequest> = new Set();
 
-  constructor(url: string, timeout: number) {
+  constructor(url: string, timeout: number, customHeaders: Record<string, string> = {}) {
     this.url = url;
     this.timeout = timeout;
+    this.customHeaders = customHeaders;
   }
 
   // ---------------------------------------------------------------------------
@@ -104,6 +106,7 @@ export class HttpTransport implements Transport {
           : 80,
         path: parsedUrl.pathname + parsedUrl.search,
         headers: {
+          ...this.customHeaders,
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body, 'utf8'),
           Accept: 'application/json, text/event-stream',

@@ -17,7 +17,7 @@ export function createTransport(target: string, config: VerificationConfig): Tra
       return new StdioTransport(target, config.timeout, config.verbose);
 
     case 'http':
-      return new HttpTransport(target, config.timeout);
+      return new HttpTransport(target, config.timeout, config.headers);
 
     default: {
       const _exhaustive: never = transportType;
