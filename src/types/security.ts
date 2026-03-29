@@ -14,4 +14,5 @@ export interface SecurityFinding {
   confidence: SecurityConfidence;
   evidence?: Record<string, unknown>;
   suppressed: boolean;
+  justification?: string;
 }

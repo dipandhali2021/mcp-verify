@@ -355,7 +355,13 @@ export class TerminalReporter implements Reporter {
       if (suppressedFindings.length > 0) {
         lines.push(`  ${color(DIM, `${suppressedFindings.length} suppressed finding(s)`)}`);
         for (const finding of suppressedFindings) {
-          lines.push(`    ${color(DIM, `[SUPPRESSED] ${finding.checkId}: ${finding.title}`)}`);
+          const justificationSuffix =
+            finding.justification !== undefined
+              ? ` — ${finding.justification}`
+              : '';
+          lines.push(
+            `    ${color(DIM, `[SUPPRESSED] ${finding.checkId}: ${finding.title}${justificationSuffix}`)}`,
+          );
         }
       }
     }

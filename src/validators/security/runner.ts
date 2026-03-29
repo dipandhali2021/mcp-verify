@@ -26,7 +26,10 @@ const SECURITY_CHECKS: SecurityCheck[] = [
 
 /**
  * Run all security checks and return findings with globally unique IDs.
- * Skipped checks (via config.skip) produce no findings.
+ *
+ * Checks listed in config.skip are still executed so their findings appear in
+ * the suppressed section of the report; the findings are marked suppressed and
+ * their justification (if any) is attached from config.skipJustifications.
  */
 export function runSecurityChecks(
   exchange: ProtocolExchangeRecord,
@@ -37,15 +40,22 @@ export function runSecurityChecks(
   let globalCounter = 0;
 
   for (const check of SECURITY_CHECKS) {
-    // Skip suppressed checks
-    if (config.skip.includes(check.id)) continue;
-
     const findings = check.check(ctx);
 
     // Re-number findings with globally unique IDs
     for (const finding of findings) {
       globalCounter++;
       finding.id = `SEC-${String(globalCounter).padStart(3, '0')}`;
+
+      // Apply suppression: if the check is in the skip list, mark finding suppressed
+      if (config.skip.includes(finding.checkId)) {
+        finding.suppressed = true;
+        const justification = config.skipJustifications[finding.checkId];
+        if (justification !== undefined) {
+          finding.justification = justification;
+        }
+      }
+
       allFindings.push(finding);
     }
   }
