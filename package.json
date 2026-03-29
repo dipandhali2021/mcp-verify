@@ -3,9 +3,9 @@
   "version": "1.1.0",
   "description": "Framework-agnostic CLI and GitHub Action that verifies MCP servers for spec conformance, security vulnerabilities, and health metrics",
   "type": "module",
-  "main": "dist/cli.js",
+  "main": "dist/cli.cjs",
   "bin": {
-    "mcp-verify": "dist/cli.js"
+    "mcp-verify": "dist/cli.cjs"
   },
   "scripts": {
     "build": "tsup",
@@ -28,8 +28,7 @@
     "node": ">=18.0.0"
   },
   "files": [
-    "dist/",
-    "action/"
+    "dist/"
   ],
   "dependencies": {
     "commander": "^12.1.0"
