@@ -1,0 +1,273 @@
+# docs/examples/gitlab-ci.yml
+#
+# Copy-paste-ready GitLab CI pipeline for MCP server verification.
+# Merge the relevant sections into your project's .gitlab-ci.yml file.
+#
+# OVERVIEW
+# --------
+# mcp-verify checks your MCP server for:
+#   - Spec conformance (JSON-RPC 2.0 and MCP protocol rules)
+#   - Security vulnerabilities (tool poisoning, info leakage, etc.)
+#   - Health and reachability
+#
+# EXIT CODES
+# ----------
+#   0  All checks passed and thresholds were met
+#   1  Verification completed but a threshold was breached
+#        (conformance score below --conformance-threshold, or a finding
+#         at or above --fail-on-severity was detected)
+#   2  Verification could not complete (network error, invalid target,
+#        malformed response, or internal tool error)
+#
+# GitLab CI treats any non-zero exit code as a job failure, so exit 1
+# and exit 2 both mark the job as failed by default. Use allow_failure
+# (see the lenient job example below) if you want threshold breaches to
+# be advisory only.
+
+# ---------------------------------------------------------------------------
+# Minimal example — single server, sensible defaults
+# ---------------------------------------------------------------------------
+mcp-verify:
+  # Use the official Node.js 20 slim image. node:20-slim keeps image size
+  # small while providing npm and npx. Use node:20 if you need additional
+  # OS packages (e.g., for stdio-based servers with native dependencies).
+  image: node:20-slim
+
+  # Run in the 'test' stage so it executes after build/lint and before deploy.
+  # Add 'test' to your top-level 'stages' list if it is not already present.
+  stage: test
+
+  script:
+    # npx --yes downloads mcp-verify@latest on first run and caches it.
+    # Replace @latest with a specific version (e.g., @1.0.0) for
+    # reproducible pipelines.
+    - |
+      npx --yes mcp-verify@latest https://your-mcp-server.example.com \
+        --format json \
+        --fail-on-severity high \
+        --conformance-threshold 80 \
+        --output mcp-verify-report.json
+
+  # Persist the JSON report so it is accessible in the GitLab UI and
+  # downloadable by downstream jobs.
+  artifacts:
+    paths:
+      - mcp-verify-report.json
+    # Upload the artifact regardless of job success or failure so you can
+    # inspect the report even when the job fails due to a threshold breach.
+    when: always
+    # Keep artifacts for 1 week; increase for audit trail requirements.
+    expire_in: 1 week
+
+  # Control when this job runs.
+  rules:
+    # Run on merge requests to catch regressions before they reach the
+    # default branch.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Run on the default branch (usually 'main' or 'master') to maintain
+    # a continuous conformance baseline.
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ---------------------------------------------------------------------------
+# Advanced example — all CLI flags explained
+# ---------------------------------------------------------------------------
+mcp-verify-advanced:
+  image: node:20-slim
+  stage: test
+
+  # Use a CI/CD variable ($MCP_SERVER_URL) instead of a hardcoded URL so
+  # the same pipeline config works across forks and deployment environments.
+  # Set MCP_SERVER_URL in your project's Settings > CI/CD > Variables.
+  script:
+    - |
+      npx --yes mcp-verify@latest "$MCP_SERVER_URL" \
+
+        # --format controls the output written to stdout.
+        # Options: terminal (coloured, human-readable), json, markdown
+        # Use 'json' here so the full structured report is captured in the
+        # artifact. Use 'terminal' or 'markdown' for human-readable logs.
+        --format json \
+
+        # --fail-on-severity sets the minimum severity level that causes a
+        # non-zero exit code (exit 1). Levels in ascending order:
+        #   none < low < medium < high < critical
+        # 'high' means findings of severity 'high' OR 'critical' fail the job.
+        # Set to 'critical' for less noise; 'low' for maximum strictness.
+        # Set to 'none' to prevent security findings from failing the job.
+        --fail-on-severity high \
+
+        # --conformance-threshold sets the minimum conformance score (0–100)
+        # required to exit with code 0. Scores below this value produce exit 1.
+        # A score of 0 (default) means the conformance score never fails the job.
+        --conformance-threshold 80 \
+
+        # --timeout sets the per-request timeout in milliseconds.
+        # Increase for slow servers or high-latency networks.
+        # Default: 10000 (10 seconds)
+        --timeout 15000 \
+
+        # --output writes the report to a file in addition to stdout.
+        # The directory must exist; mcp-verify will not create it.
+        --output mcp-verify-report.json
+
+  artifacts:
+    paths:
+      - mcp-verify-report.json
+    when: always
+    expire_in: 30 days
+
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ---------------------------------------------------------------------------
+# Config file example — policy as code
+#
+# A mcp-verify.json config file lets you version-control your verification
+# policy. It supports suppressing known findings with justifications,
+# default thresholds, and check modes. Place it at the repository root.
+#
+# Example mcp-verify.json:
+# {
+#   "conformanceThreshold": 80,
+#   "failOnSeverity": "high",
+#   "checkMode": "balanced",
+#   "skip": [
+#     {
+#       "checkId": "SEC-003",
+#       "justification": "Internal-only server; tool descriptions are trusted"
+#     }
+#   ]
+# }
+#
+# Precedence (highest to lowest):
+#   CLI flags  >  mcp-verify.json  >  built-in defaults
+# ---------------------------------------------------------------------------
+mcp-verify-with-config:
+  image: node:20-slim
+  stage: test
+
+  script:
+    - |
+      npx --yes mcp-verify@latest https://your-mcp-server.example.com \
+        --format json \
+
+        # --config points to your policy file. If omitted, mcp-verify
+        # auto-discovers mcp-verify.json or .mcp-verify.json in the
+        # current working directory (which is the repo root in GitLab CI).
+        --config ./mcp-verify.json \
+
+        --output mcp-verify-report.json
+
+  artifacts:
+    paths:
+      - mcp-verify-report.json
+    when: always
+
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ---------------------------------------------------------------------------
+# Matrix example — verify multiple environments in parallel
+#
+# GitLab CI does not have native matrix support for non-container jobs, but
+# you can achieve the same result by defining separate jobs that share a
+# common YAML anchor (DRY pattern using &anchor / *alias syntax).
+# ---------------------------------------------------------------------------
+
+# Define shared configuration once; reference it in each environment job.
+.mcp-verify-base: &mcp-verify-base
+  image: node:20-slim
+  stage: test
+  artifacts:
+    paths:
+      - mcp-verify-report.json
+    when: always
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+mcp-verify-production:
+  <<: *mcp-verify-base
+  script:
+    - |
+      npx --yes mcp-verify@latest https://prod.example.com/mcp \
+        --format json \
+        # Stricter threshold for production
+        --fail-on-severity high \
+        --conformance-threshold 90 \
+        --output mcp-verify-report.json
+
+mcp-verify-staging:
+  <<: *mcp-verify-base
+  script:
+    - |
+      npx --yes mcp-verify@latest https://staging.example.com/mcp \
+        --format json \
+        # Slightly relaxed threshold for staging
+        --fail-on-severity high \
+        --conformance-threshold 75 \
+        --output mcp-verify-report.json
+
+# ---------------------------------------------------------------------------
+# Advisory-only example — report findings without blocking the pipeline
+#
+# Use allow_failure: true when you want visibility into conformance issues
+# without gating deployments (useful when first onboarding a new server).
+# ---------------------------------------------------------------------------
+mcp-verify-advisory:
+  image: node:20-slim
+  stage: test
+
+  script:
+    - |
+      npx --yes mcp-verify@latest https://your-mcp-server.example.com \
+        --format json \
+        --fail-on-severity high \
+        --conformance-threshold 80 \
+        --output mcp-verify-report.json
+
+  # allow_failure: true means a non-zero exit code marks the job as a
+  # warning (orange) rather than a failure (red). The pipeline continues
+  # and downstream jobs (e.g., deploy) are not blocked.
+  allow_failure: true
+
+  artifacts:
+    paths:
+      - mcp-verify-report.json
+    when: always
+
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ---------------------------------------------------------------------------
+# Scheduled weekly run example
+#
+# Catches regressions caused by upstream server changes that are not
+# triggered by commits in this repository.
+# ---------------------------------------------------------------------------
+mcp-verify-scheduled:
+  image: node:20-slim
+  stage: test
+
+  script:
+    - |
+      npx --yes mcp-verify@latest https://your-mcp-server.example.com \
+        --format json \
+        --fail-on-severity high \
+        --conformance-threshold 80 \
+        --output mcp-verify-report.json
+
+  artifacts:
+    paths:
+      - mcp-verify-report.json
+    when: always
+    expire_in: 30 days
+
+  # Only run when triggered by the GitLab CI schedule. Configure the
+  # schedule in Settings > CI/CD > Schedules (e.g., every Monday at 06:00).
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"

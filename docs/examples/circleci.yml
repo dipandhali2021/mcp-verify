@@ -1,0 +1,332 @@
+# docs/examples/circleci.yml
+#
+# Copy-paste-ready CircleCI configuration for MCP server verification.
+# Save this file as .circleci/config.yml in your repository, or merge
+# the relevant jobs and workflows into your existing config.
+#
+# OVERVIEW
+# --------
+# mcp-verify checks your MCP server for:
+#   - Spec conformance (JSON-RPC 2.0 and MCP protocol rules)
+#   - Security vulnerabilities (tool poisoning, info leakage, etc.)
+#   - Health and reachability
+#
+# EXIT CODES
+# ----------
+#   0  All checks passed and thresholds were met
+#   1  Verification completed but a threshold was breached
+#        (conformance score below --conformance-threshold, or a finding
+#         at or above --fail-on-severity was detected)
+#   2  Verification could not complete (network error, invalid target,
+#        malformed response, or internal tool error)
+#
+# CircleCI treats any non-zero exit code as a step failure, which marks
+# the containing job as failed. Use `when: always` on store_artifacts and
+# store_test_results steps to ensure reports are captured even on failure.
+
+version: 2.1
+
+# ---------------------------------------------------------------------------
+# Reusable commands (optional, reduces duplication in multi-job configs)
+# ---------------------------------------------------------------------------
+commands:
+  run-mcp-verify:
+    description: Run mcp-verify and store the JSON report as an artifact
+    parameters:
+      target:
+        description: MCP server URL or stdio command to verify
+        type: string
+      fail-on-severity:
+        description: Minimum severity level that fails the job (critical/high/medium/low/none)
+        type: string
+        default: high
+      conformance-threshold:
+        description: Minimum conformance score (0–100) required to pass
+        type: string
+        default: "80"
+      timeout:
+        description: Per-request timeout in milliseconds
+        type: string
+        default: "10000"
+      config:
+        description: Path to mcp-verify.json config file (empty string = auto-discover)
+        type: string
+        default: ""
+      output-file:
+        description: Path to write the JSON report
+        type: string
+        default: mcp-verify-report.json
+
+    steps:
+      - run:
+          name: Verify MCP Server
+          # Build the command from parameters. Shell arithmetic handles the
+          # optional --config flag cleanly without a separate script step.
+          command: |
+            CONFIG_FLAG=""
+            if [ -n "<< parameters.config >>" ]; then
+              CONFIG_FLAG="--config << parameters.config >>"
+            fi
+
+            # npx --yes downloads mcp-verify@latest on first run.
+            # Pin to a specific version (e.g., @1.0.0) for reproducibility.
+            # shellcheck disable=SC2086
+            npx --yes mcp-verify@latest "<< parameters.target >>" \
+              --format json \
+              --fail-on-severity "<< parameters.fail-on-severity >>" \
+              --conformance-threshold "<< parameters.conformance-threshold >>" \
+              --timeout "<< parameters.timeout >>" \
+              --output "<< parameters.output-file >>" \
+              ${CONFIG_FLAG}
+
+      # store_artifacts makes the report downloadable from the Artifacts
+      # tab in the CircleCI job detail page.
+      - store_artifacts:
+          # when: always ensures the report is uploaded even when the
+          # run step above fails (exit code 1 or 2).
+          path: << parameters.output-file >>
+          destination: mcp-verify-report.json
+
+# ---------------------------------------------------------------------------
+# Job definitions
+# ---------------------------------------------------------------------------
+jobs:
+  # -------------------------------------------------------------------------
+  # Job 1: Minimal single-target verification
+  # -------------------------------------------------------------------------
+  mcp-verify:
+    # cimg/node:20.0 is the CircleCI convenience image for Node.js 20.
+    # It includes Node, npm, npx, git, and common CI utilities out of the box.
+    # Use cimg/node:20.x to always get the latest Node 20 patch release.
+    docker:
+      - image: cimg/node:20.0
+
+    steps:
+      - checkout
+
+      - run:
+          name: Verify MCP Server
+          command: |
+            npx --yes mcp-verify@latest https://your-mcp-server.example.com \
+              --format json \
+              --fail-on-severity high \
+              --conformance-threshold 80 \
+              --output mcp-verify-report.json
+
+      - store_artifacts:
+          path: mcp-verify-report.json
+
+  # -------------------------------------------------------------------------
+  # Job 2: Full example — all CLI flags explained
+  # -------------------------------------------------------------------------
+  mcp-verify-full:
+    docker:
+      - image: cimg/node:20.0
+
+    # Environment variables scoped to this job. Prefer CircleCI project or
+    # context variables (set in the CircleCI UI) for sensitive values.
+    environment:
+      # Override the default target URL from a project environment variable.
+      # Set MCP_SERVER_URL in Project Settings > Environment Variables.
+      MCP_SERVER_URL: https://your-mcp-server.example.com
+
+    steps:
+      - checkout
+
+      - run:
+          name: Verify MCP Server (full flags)
+          command: |
+            npx --yes mcp-verify@latest "$MCP_SERVER_URL" \
+
+              # --format controls the output written to stdout (and to --output).
+              # Options: terminal (coloured, human-readable), json, markdown
+              # Use 'json' to produce a machine-readable artifact.
+              --format json \
+
+              # --fail-on-severity sets the minimum severity level that causes
+              # a non-zero exit. Levels in ascending order:
+              #   none < low < medium < high < critical
+              # 'high' means findings of severity 'high' OR 'critical' fail the job.
+              --fail-on-severity high \
+
+              # --conformance-threshold (0–100) is the minimum score required
+              # to exit with code 0. Scores below this value produce exit code 1.
+              --conformance-threshold 80 \
+
+              # --timeout is the per-request timeout in milliseconds.
+              # Increase for slow or geographically remote servers.
+              --timeout 15000 \
+
+              # --output writes the report to a file on disk (in addition to stdout).
+              # The directory must already exist.
+              --output mcp-verify-report.json
+
+      - store_artifacts:
+          path: mcp-verify-report.json
+
+  # -------------------------------------------------------------------------
+  # Job 3: Config file driven verification
+  #
+  # A mcp-verify.json file lets you version-control your verification policy.
+  # Supported fields:
+  #   conformanceThreshold  integer 0–100
+  #   failOnSeverity        none | low | medium | high | critical
+  #   checkMode             strict | balanced | lenient
+  #   skip                  array of { checkId, justification } objects
+  #
+  # Example mcp-verify.json:
+  # {
+  #   "conformanceThreshold": 80,
+  #   "failOnSeverity": "high",
+  #   "checkMode": "balanced",
+  #   "skip": [
+  #     {
+  #       "checkId": "SEC-003",
+  #       "justification": "Internal-only server; tool descriptions are trusted"
+  #     }
+  #   ]
+  # }
+  #
+  # Precedence (highest to lowest):
+  #   CLI flags  >  mcp-verify.json  >  built-in defaults
+  # -------------------------------------------------------------------------
+  mcp-verify-with-config:
+    docker:
+      - image: cimg/node:20.0
+
+    steps:
+      - checkout
+
+      - run:
+          name: Verify with config file
+          command: |
+            npx --yes mcp-verify@latest https://your-mcp-server.example.com \
+              --format json \
+
+              # --config points to the policy file.
+              # If omitted, mcp-verify auto-discovers mcp-verify.json or
+              # .mcp-verify.json in the current working directory.
+              --config ./mcp-verify.json \
+
+              --output mcp-verify-report.json
+
+      - store_artifacts:
+          path: mcp-verify-report.json
+
+  # -------------------------------------------------------------------------
+  # Job 4: Matrix-style multi-environment verification
+  #
+  # CircleCI does not have native matrix parameters, but you can reuse the
+  # shared command defined above to keep each environment job concise.
+  # -------------------------------------------------------------------------
+  mcp-verify-production:
+    docker:
+      - image: cimg/node:20.0
+    steps:
+      - checkout
+      - run-mcp-verify:
+          target: https://prod.example.com/mcp
+          # Stricter thresholds for production
+          fail-on-severity: high
+          conformance-threshold: "90"
+          output-file: mcp-verify-production.json
+      - store_artifacts:
+          path: mcp-verify-production.json
+
+  mcp-verify-staging:
+    docker:
+      - image: cimg/node:20.0
+    steps:
+      - checkout
+      - run-mcp-verify:
+          target: https://staging.example.com/mcp
+          # Relaxed threshold for staging environment
+          fail-on-severity: high
+          conformance-threshold: "75"
+          output-file: mcp-verify-staging.json
+      - store_artifacts:
+          path: mcp-verify-staging.json
+
+  mcp-verify-preview:
+    docker:
+      - image: cimg/node:20.0
+    steps:
+      - checkout
+      - run-mcp-verify:
+          target: https://preview.example.com/mcp
+          # Lenient threshold for ephemeral preview environments
+          fail-on-severity: critical
+          conformance-threshold: "60"
+          output-file: mcp-verify-preview.json
+      - store_artifacts:
+          path: mcp-verify-preview.json
+
+# ---------------------------------------------------------------------------
+# Workflow definitions
+# ---------------------------------------------------------------------------
+workflows:
+  # -------------------------------------------------------------------------
+  # Default workflow — runs on every push and pull request
+  # -------------------------------------------------------------------------
+  verify:
+    jobs:
+      # Single-target verification runs on all branches and PRs.
+      - mcp-verify
+
+  # -------------------------------------------------------------------------
+  # Multi-environment workflow — runs only on the main branch
+  #
+  # Separating multi-environment runs into their own workflow avoids
+  # running expensive parallel jobs on every feature branch.
+  # -------------------------------------------------------------------------
+  verify-all-environments:
+    jobs:
+      - mcp-verify-production:
+          # Restrict to the main branch only.
+          # Remove this filter to run on all branches.
+          filters:
+            branches:
+              only: main
+
+      - mcp-verify-staging:
+          filters:
+            branches:
+              only: main
+
+      - mcp-verify-preview:
+          filters:
+            branches:
+              only: main
+
+  # -------------------------------------------------------------------------
+  # Scheduled workflow — weekly conformance check
+  #
+  # Catches regressions caused by upstream server changes that are not
+  # triggered by commits in this repository.
+  #
+  # To enable scheduled workflows in CircleCI:
+  #   1. Go to Project Settings > Triggers
+  #   2. Add a new scheduled trigger with a cron expression
+  #      (e.g., "0 6 * * 1" for every Monday at 06:00 UTC)
+  #   3. Set the pipeline parameter that activates this workflow
+  #
+  # Alternatively, use the CircleCI API to trigger this workflow on a
+  # schedule via an external cron job (AWS EventBridge, GitHub Actions
+  # schedule, etc.).
+  # -------------------------------------------------------------------------
+  verify-scheduled:
+    # This workflow only runs when the 'run_scheduled_verification'
+    # pipeline parameter is true. Set this parameter in your scheduled
+    # trigger configuration.
+    when: << pipeline.parameters.run_scheduled_verification >>
+    jobs:
+      - mcp-verify-full
+
+# ---------------------------------------------------------------------------
+# Pipeline parameters (required for conditional scheduled workflow above)
+# ---------------------------------------------------------------------------
+parameters:
+  run_scheduled_verification:
+    description: Set to true by the scheduled trigger to run weekly verification
+    type: boolean
+    default: false

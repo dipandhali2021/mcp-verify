@@ -1,0 +1,260 @@
+# docs/examples/github-actions.yml
+#
+# Copy-paste-ready GitHub Actions workflow for MCP server verification.
+# Save this file as .github/workflows/mcp-verify.yml in your repository.
+#
+# OVERVIEW
+# --------
+# mcp-verify checks your MCP server for:
+#   - Spec conformance (JSON-RPC 2.0 and MCP protocol rules)
+#   - Security vulnerabilities (tool poisoning, info leakage, etc.)
+#   - Health and reachability
+#
+# EXIT CODES
+# ----------
+#   0  All checks passed and thresholds were met
+#   1  Verification completed but a threshold was breached
+#        (conformance score below --conformance-threshold, or a finding
+#         at or above --fail-on-severity was detected)
+#   2  Verification could not complete (network error, invalid target,
+#        malformed response, or internal tool error)
+#
+# ACTION OUTPUTS (available in subsequent steps via steps.<id>.outputs.*)
+# -----------------------------------------------------------------------
+#   conformance-score        Integer 0–100
+#   security-findings-count  Total active (non-suppressed) findings
+#   pass                     "true" or "false"
+
+name: MCP Server Verification
+
+on:
+  # Run on every pull request so contributors get feedback before merge
+  pull_request:
+
+  # Run on pushes to the main branch to keep the trunk green
+  push:
+    branches: [main]
+
+  # Weekly scheduled run catches regressions caused by upstream server
+  # changes that are unrelated to code commits in this repository.
+  # Cron syntax: minute hour day-of-month month day-of-week
+  schedule:
+    - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC
+
+# Cancel in-progress runs for the same branch/PR when a new run starts.
+# This prevents queue pile-up during rapid PR iteration.
+concurrency:
+  group: mcp-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Basic single-target verification
+  #
+  # This is the minimal job you need to get started. Replace the target URL
+  # with your actual MCP server endpoint.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Verify MCP Server
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify MCP Server
+        id: verify
+        # Use the published action from the mcp-verify/action repository.
+        # For local development inside the mcp-verify repo itself, replace
+        # this line with:  uses: ./
+        uses: mcp-verify/action@v1
+        with:
+          # REQUIRED: URL of the MCP server to verify.
+          # For stdio-based servers use a command string, e.g.:
+          #   target: 'node ./dist/server.js'
+          target: 'https://your-mcp-server.example.com'
+
+          # Minimum severity level that causes the workflow to fail (exit 1).
+          # Levels in ascending order: none < low < medium < high < critical
+          # Default: critical  (only critical findings fail the build)
+          # Set to 'high' to also fail on high-severity findings.
+          # Set to 'none' to never fail on security findings alone.
+          fail-on-severity: 'high'
+
+          # Minimum conformance score (integer 0–100) required to pass.
+          # If the server scores below this value the action exits with code 1.
+          # Default: 0  (conformance score never fails the build)
+          # Set to '80' to require at least 80/100 conformance.
+          conformance-threshold: '80'
+
+          # Output format written to the step log.
+          # Options: terminal (default, coloured), json, markdown
+          # The action always captures a JSON result internally for its
+          # outputs; this setting only affects what you see in the log.
+          format: 'terminal'
+
+          # Timeout in milliseconds for each server response.
+          # Increase this for slow or remote servers.
+          # Default: 10000 (10 seconds)
+          timeout: '10000'
+
+        # GITHUB_TOKEN is required to post or update the verification
+        # summary as a PR comment. The token is automatically available
+        # in every Actions run; no manual secret configuration is needed.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Access structured outputs from the verification step in later steps.
+      - name: Report verification result
+        if: always()
+        run: |
+          echo "Conformance score : ${{ steps.verify.outputs.conformance-score }}/100"
+          echo "Security findings : ${{ steps.verify.outputs.security-findings-count }}"
+          echo "Pass              : ${{ steps.verify.outputs.pass }}"
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Matrix build — verify multiple servers in parallel
+  #
+  # Useful when you maintain several environments (production, staging, etc.)
+  # and want a single workflow to cover all of them. Each matrix entry runs
+  # as an independent job; a failure in one does not cancel the others
+  # (fail-fast: false).
+  # ---------------------------------------------------------------------------
+  verify-matrix:
+    name: Verify ${{ matrix.server.name }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Allow all matrix jobs to complete even if one fails, so you get a
+      # complete picture of all environment health in one workflow run.
+      fail-fast: false
+
+      matrix:
+        server:
+          # Add or remove entries to match your environments.
+          - name: production
+            url: https://prod.example.com/mcp
+            # Stricter threshold for production
+            conformance_threshold: '90'
+            fail_on_severity: 'high'
+
+          - name: staging
+            url: https://staging.example.com/mcp
+            # Slightly relaxed threshold for staging
+            conformance_threshold: '75'
+            fail_on_severity: 'high'
+
+          - name: preview
+            url: https://preview.example.com/mcp
+            # Lenient threshold for ephemeral preview environments
+            conformance_threshold: '60'
+            fail_on_severity: 'critical'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify ${{ matrix.server.name }}
+        id: verify
+        uses: mcp-verify/action@v1
+        with:
+          target: ${{ matrix.server.url }}
+          # Per-environment thresholds come from the matrix definition above
+          fail-on-severity: ${{ matrix.server.fail_on_severity }}
+          conformance-threshold: ${{ matrix.server.conformance_threshold }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary for ${{ matrix.server.name }}
+        if: always()
+        run: |
+          echo "=== ${{ matrix.server.name }} ==="
+          echo "Score : ${{ steps.verify.outputs.conformance-score }}/100"
+          echo "Pass  : ${{ steps.verify.outputs.pass }}"
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Verification driven by a config file (mcp-verify.json)
+  #
+  # A config file lets you version-control your verification policy alongside
+  # your code. It supports suppressing known findings with justifications,
+  # setting default thresholds, and customising check modes — without changing
+  # your workflow YAML.
+  #
+  # Example mcp-verify.json:
+  # {
+  #   "conformanceThreshold": 80,
+  #   "failOnSeverity": "high",
+  #   "checkMode": "balanced",
+  #   "skip": [
+  #     {
+  #       "checkId": "SEC-003",
+  #       "justification": "Internal-only server; tool descriptions are trusted"
+  #     }
+  #   ]
+  # }
+  #
+  # CLI flags always take precedence over config file values, which in turn
+  # take precedence over built-in defaults:
+  #   CLI flags  >  mcp-verify.json  >  built-in defaults
+  # ---------------------------------------------------------------------------
+  verify-with-config:
+    name: Verify with config file
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify with config
+        id: verify
+        uses: mcp-verify/action@v1
+        with:
+          target: 'https://your-mcp-server.example.com'
+
+          # Path to your config file, relative to the repository root.
+          # If omitted, the action auto-discovers mcp-verify.json or
+          # .mcp-verify.json in the repository root.
+          config: './mcp-verify.json'
+
+          # Flags provided here override the values in the config file.
+          # For example, you could tighten the threshold for main-branch
+          # pushes beyond what the shared config file specifies.
+          fail-on-severity: 'high'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Full example with threshold enforcement and artifact upload
+  #
+  # Demonstrates saving the JSON report as a workflow artifact so it can be
+  # downloaded from the Actions UI or consumed by downstream tooling.
+  # ---------------------------------------------------------------------------
+  verify-full:
+    name: Full verification with artifact
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Run mcp-verify directly with npx when you need the JSON report as an
+      # artifact. The action itself does not expose a --output flag, but the
+      # CLI does: capture stdout when using --format json.
+      - name: Run mcp-verify CLI
+        # Continue even on exit code 1 (threshold breached) so the artifact
+        # upload step below can still run. A missing report (exit 2) is a
+        # genuine error that will propagate through the if: always() guard.
+        continue-on-error: true
+        run: |
+          npx --yes mcp-verify@latest https://your-mcp-server.example.com \
+            --format json \
+            --fail-on-severity high \
+            --conformance-threshold 80 \
+            --output mcp-verify-report.json
+
+      # Upload the report so it persists for 30 days and can be downloaded
+      # from the workflow run's Artifacts panel in the GitHub UI.
+      - name: Upload verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-verify-report
+          path: mcp-verify-report.json
+          # Keep reports for 30 days; reduce to save storage on high-frequency runs
+          retention-days: 30
