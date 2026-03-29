@@ -1,0 +1,441 @@
+name: 'MCP Verify'
+description: 'Verify MCP servers for spec conformance, security vulnerabilities, and health metrics'
+author: 'MCP Verify Contributors'
+
+inputs:
+  target:
+    description: 'MCP server URL or stdio command to verify'
+    required: true
+  fail-on-severity:
+    description: 'Minimum severity level to fail on (critical, high, medium, low, none)'
+    required: false
+    default: 'critical'
+  conformance-threshold:
+    description: 'Minimum conformance score (0-100) to pass'
+    required: false
+    default: '0'
+  format:
+    description: 'Output format for the human-readable step log (terminal, json, markdown)'
+    required: false
+    default: 'terminal'
+  config:
+    description: 'Path to mcp-verify.json config file'
+    required: false
+  timeout:
+    description: 'Timeout in milliseconds for server responses'
+    required: false
+    default: '10000'
+
+outputs:
+  conformance-score:
+    description: 'Overall conformance score (0-100)'
+    value: ${{ steps.parse-results.outputs.conformance-score }}
+  security-findings-count:
+    description: 'Total number of active security findings'
+    value: ${{ steps.parse-results.outputs.security-findings-count }}
+  pass:
+    description: 'Whether verification passed (true/false)'
+    value: ${{ steps.parse-results.outputs.pass }}
+
+runs:
+  using: 'composite'
+  steps:
+    # ------------------------------------------------------------------
+    # Step 1: Run mcp-verify with JSON output to capture structured data
+    # ------------------------------------------------------------------
+    - name: Run MCP Verify
+      id: run-verify
+      shell: bash
+      env:
+        MCP_TARGET: ${{ inputs.target }}
+        MCP_FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+        MCP_CONFORMANCE_THRESHOLD: ${{ inputs.conformance-threshold }}
+        MCP_TIMEOUT: ${{ inputs.timeout }}
+        MCP_CONFIG: ${{ inputs.config }}
+      run: |
+        # Build optional config flag
+        CONFIG_FLAG=""
+        if [ -n "${MCP_CONFIG}" ]; then
+          CONFIG_FLAG="--config ${MCP_CONFIG}"
+        fi
+
+        # Use RUNNER_TEMP when available; fall back to /tmp for local use
+        TMPDIR="${RUNNER_TEMP:-/tmp}"
+        RUN_SUFFIX="${GITHUB_RUN_ID:-local}-${GITHUB_JOB:-default}"
+        RESULT_FILE="${TMPDIR}/mcp-verify-result-${RUN_SUFFIX}.json"
+        STDERR_FILE="${TMPDIR}/mcp-verify-stderr-${RUN_SUFFIX}.txt"
+
+        # Export paths for downstream steps via GITHUB_ENV
+        echo "MCP_VERIFY_RESULT_FILE=${RESULT_FILE}" >> "${GITHUB_ENV}"
+        echo "MCP_VERIFY_STDERR_FILE=${STDERR_FILE}" >> "${GITHUB_ENV}"
+
+        # Run verification; capture JSON to file; allow non-zero exit here
+        # shellcheck disable=SC2086
+        npx --yes mcp-verify@latest "${MCP_TARGET}" \
+          --format json \
+          --fail-on-severity "${MCP_FAIL_ON_SEVERITY}" \
+          --conformance-threshold "${MCP_CONFORMANCE_THRESHOLD}" \
+          --timeout "${MCP_TIMEOUT}" \
+          --no-color \
+          ${CONFIG_FLAG} \
+          > "${RESULT_FILE}" \
+          2> "${STDERR_FILE}" \
+          || true
+
+        # Echo stderr to the step log for visibility
+        if [ -s "${STDERR_FILE}" ]; then
+          echo "--- mcp-verify stderr ---"
+          cat "${STDERR_FILE}"
+          echo "-------------------------"
+        fi
+
+    # ------------------------------------------------------------------
+    # Step 2: Parse JSON results and set action outputs
+    # ------------------------------------------------------------------
+    - name: Parse results and set outputs
+      id: parse-results
+      shell: bash
+      run: |
+        RESULT_FILE="${MCP_VERIFY_RESULT_FILE}"
+
+        if [ ! -f "${RESULT_FILE}" ]; then
+          echo "::error::mcp-verify did not produce a result file at ${RESULT_FILE}"
+          echo "conformance-score=0" >> "${GITHUB_OUTPUT}"
+          echo "security-findings-count=0" >> "${GITHUB_OUTPUT}"
+          echo "pass=false" >> "${GITHUB_OUTPUT}"
+          exit 1
+        fi
+
+        if [ ! -s "${RESULT_FILE}" ]; then
+          echo "::error::mcp-verify result file is empty. Check the target and try again."
+          echo "conformance-score=0" >> "${GITHUB_OUTPUT}"
+          echo "security-findings-count=0" >> "${GITHUB_OUTPUT}"
+          echo "pass=false" >> "${GITHUB_OUTPUT}"
+          exit 1
+        fi
+
+        node - <<'NODE_SCRIPT'
+        const fs = require('fs');
+        const resultFile = process.env.MCP_VERIFY_RESULT_FILE;
+        const outputFile = process.env.GITHUB_OUTPUT;
+
+        let raw;
+        try {
+          raw = fs.readFileSync(resultFile, 'utf8');
+        } catch (err) {
+          console.error('::error::Failed to read result file: ' + err.message);
+          process.exit(1);
+        }
+
+        let result;
+        try {
+          result = JSON.parse(raw);
+        } catch (err) {
+          console.error('::error::Result file is not valid JSON: ' + err.message);
+          console.error('Raw content (first 500 chars): ' + raw.slice(0, 500));
+          process.exit(1);
+        }
+
+        const conformanceScore = (result && result.conformance && result.conformance.score != null)
+          ? result.conformance.score
+          : 0;
+        const findingsCount = (result && result.security && Array.isArray(result.security.findings))
+          ? result.security.findings.length
+          : 0;
+        const pass = (result && result.summary && result.summary.pass === true) ? 'true' : 'false';
+
+        const outputs = [
+          'conformance-score=' + conformanceScore,
+          'security-findings-count=' + findingsCount,
+          'pass=' + pass,
+        ].join('\n') + '\n';
+
+        fs.appendFileSync(outputFile, outputs);
+
+        console.log('Conformance score: ' + conformanceScore);
+        console.log('Security findings: ' + findingsCount);
+        console.log('Pass: ' + pass);
+        NODE_SCRIPT
+
+    # ------------------------------------------------------------------
+    # Step 3: Print human-readable report to step log
+    # ------------------------------------------------------------------
+    - name: Print report
+      id: print-report
+      shell: bash
+      env:
+        MCP_TARGET: ${{ inputs.target }}
+        MCP_FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+        MCP_CONFORMANCE_THRESHOLD: ${{ inputs.conformance-threshold }}
+        MCP_TIMEOUT: ${{ inputs.timeout }}
+        MCP_CONFIG: ${{ inputs.config }}
+        MCP_FORMAT: ${{ inputs.format }}
+      run: |
+        RESULT_FILE="${MCP_VERIFY_RESULT_FILE}"
+
+        if [ ! -f "${RESULT_FILE}" ] || [ ! -s "${RESULT_FILE}" ]; then
+          echo "::warning::No result file available; skipping human-readable report."
+          exit 0
+        fi
+
+        # Build optional config flag
+        CONFIG_FLAG=""
+        if [ -n "${MCP_CONFIG}" ]; then
+          CONFIG_FLAG="--config ${MCP_CONFIG}"
+        fi
+
+        if [ "${MCP_FORMAT}" = "json" ]; then
+          # JSON was already captured; just pretty-print the cached result
+          echo "--- mcp-verify JSON output ---"
+          cat "${RESULT_FILE}"
+        else
+          # Re-run with the requested display format (terminal or markdown)
+          # shellcheck disable=SC2086
+          npx --yes mcp-verify@latest "${MCP_TARGET}" \
+            --format "${MCP_FORMAT}" \
+            --fail-on-severity "${MCP_FAIL_ON_SEVERITY}" \
+            --conformance-threshold "${MCP_CONFORMANCE_THRESHOLD}" \
+            --timeout "${MCP_TIMEOUT}" \
+            --no-color \
+            ${CONFIG_FLAG} \
+            2>/dev/null \
+            || true
+        fi
+
+    # ------------------------------------------------------------------
+    # Step 4: Post or update PR comment (only on pull_request events)
+    # ------------------------------------------------------------------
+    - name: Post PR comment
+      id: post-comment
+      shell: bash
+      env:
+        MCP_TARGET: ${{ inputs.target }}
+        MCP_FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+        MCP_CONFORMANCE_THRESHOLD: ${{ inputs.conformance-threshold }}
+        MCP_TIMEOUT: ${{ inputs.timeout }}
+        MCP_CONFIG: ${{ inputs.config }}
+        GH_TOKEN: ${{ github.token }}
+        GH_REPOSITORY: ${{ github.repository }}
+        GH_EVENT_NAME: ${{ github.event_name }}
+        GH_EVENT_PATH: ${{ github.event_path }}
+        GH_RUN_ID: ${{ github.run_id }}
+        GH_JOB: ${{ github.job }}
+      run: |
+        # Only post on pull request events
+        if [ "${GH_EVENT_NAME}" != "pull_request" ] && [ "${GH_EVENT_NAME}" != "pull_request_target" ]; then
+          echo "Not a pull request event (${GH_EVENT_NAME}); skipping PR comment."
+          exit 0
+        fi
+
+        # Require GH_TOKEN (GITHUB_TOKEN)
+        if [ -z "${GH_TOKEN}" ]; then
+          echo "::warning::GITHUB_TOKEN is not set; skipping PR comment."
+          exit 0
+        fi
+
+        RESULT_FILE="${MCP_VERIFY_RESULT_FILE}"
+        if [ ! -f "${RESULT_FILE}" ] || [ ! -s "${RESULT_FILE}" ]; then
+          echo "::warning::No result file available; skipping PR comment."
+          exit 0
+        fi
+
+        # Build optional config flag
+        CONFIG_FLAG=""
+        if [ -n "${MCP_CONFIG}" ]; then
+          CONFIG_FLAG="--config ${MCP_CONFIG}"
+        fi
+
+        # Generate the markdown report for the PR comment
+        TMPDIR="${RUNNER_TEMP:-/tmp}"
+        REPORT_FILE="${TMPDIR}/mcp-verify-report-${GH_RUN_ID:-local}-${GH_JOB:-default}.md"
+
+        # shellcheck disable=SC2086
+        npx --yes mcp-verify@latest "${MCP_TARGET}" \
+          --format markdown \
+          --fail-on-severity "${MCP_FAIL_ON_SEVERITY}" \
+          --conformance-threshold "${MCP_CONFORMANCE_THRESHOLD}" \
+          --timeout "${MCP_TIMEOUT}" \
+          --no-color \
+          ${CONFIG_FLAG} \
+          > "${REPORT_FILE}" \
+          2>/dev/null \
+          || true
+
+        if [ ! -s "${REPORT_FILE}" ]; then
+          echo "::warning::Markdown report is empty; skipping PR comment."
+          exit 0
+        fi
+
+        # Upsert PR comment via GitHub REST API (pure Node.js / https module)
+        REPORT_FILE="${REPORT_FILE}" \
+        GITHUB_TOKEN="${GH_TOKEN}" \
+        GITHUB_REPOSITORY="${GH_REPOSITORY}" \
+        GITHUB_EVENT_PATH="${GH_EVENT_PATH}" \
+        node - <<'NODE_SCRIPT'
+        const fs    = require('fs');
+        const https = require('https');
+
+        const COMMENT_MARKER  = '<!-- mcp-verify-report -->';
+        const reportFile      = process.env.REPORT_FILE;
+        const token           = process.env.GITHUB_TOKEN;
+        const repo            = process.env.GITHUB_REPOSITORY;
+        const eventPath       = process.env.GITHUB_EVENT_PATH;
+
+        // Read PR number from the event payload
+        let prNumber;
+        try {
+          const event = JSON.parse(fs.readFileSync(eventPath, 'utf8'));
+          prNumber = (event && event.pull_request && event.pull_request.number)
+            ? event.pull_request.number
+            : event && event.number;
+        } catch (err) {
+          console.error('::warning::Could not read event payload: ' + err.message);
+          process.exit(0);
+        }
+
+        if (!prNumber) {
+          console.error('::warning::Could not determine PR number; skipping comment.');
+          process.exit(0);
+        }
+
+        let reportBody;
+        try {
+          reportBody = fs.readFileSync(reportFile, 'utf8');
+        } catch (err) {
+          console.error('::warning::Could not read markdown report: ' + err.message);
+          process.exit(0);
+        }
+
+        const commentBody = COMMENT_MARKER + '\n' + reportBody;
+        const parts = repo.split('/');
+        const owner = parts[0];
+        const repoName = parts[1];
+
+        const BASE_HEADERS = {
+          'Authorization': 'Bearer ' + token,
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'mcp-verify-action',
+          'X-GitHub-Api-Version': '2022-11-28',
+        };
+
+        // Helper: make an HTTPS request and return parsed JSON body
+        function apiRequest(method, path, body) {
+          return new Promise(function(resolve, reject) {
+            var data = body ? JSON.stringify(body) : null;
+            var opts = {
+              hostname: 'api.github.com',
+              path: path,
+              method: method,
+              headers: Object.assign({}, BASE_HEADERS,
+                data ? { 'Content-Length': Buffer.byteLength(data) } : {}),
+            };
+            var req = https.request(opts, function(res) {
+              var chunks = '';
+              res.on('data', function(c) { chunks += c; });
+              res.on('end', function() {
+                if (res.statusCode >= 400) {
+                  reject(new Error('GitHub API ' + method + ' ' + path +
+                    ' returned ' + res.statusCode + ': ' + chunks));
+                } else {
+                  try { resolve(JSON.parse(chunks)); }
+                  catch (e) { resolve(chunks); }
+                }
+              });
+            });
+            req.on('error', reject);
+            if (data) req.write(data);
+            req.end();
+          });
+        }
+
+        var commentsPath = '/repos/' + owner + '/' + repoName +
+          '/issues/' + prNumber + '/comments?per_page=100';
+
+        apiRequest('GET', commentsPath, null)
+          .then(function(existingComments) {
+            if (!Array.isArray(existingComments)) {
+              console.error('::warning::Unexpected response listing comments; skipping.');
+              return Promise.resolve();
+            }
+
+            // Look for an existing mcp-verify comment to update
+            var existing = null;
+            for (var i = 0; i < existingComments.length; i++) {
+              var c = existingComments[i];
+              if (typeof c.body === 'string' && c.body.indexOf(COMMENT_MARKER) !== -1) {
+                existing = c;
+                break;
+              }
+            }
+
+            if (existing) {
+              return apiRequest(
+                'PATCH',
+                '/repos/' + owner + '/' + repoName + '/issues/comments/' + existing.id,
+                { body: commentBody }
+              ).then(function() {
+                console.log('Updated existing PR comment (id=' + existing.id + ').');
+              });
+            } else {
+              return apiRequest(
+                'POST',
+                '/repos/' + owner + '/' + repoName + '/issues/' + prNumber + '/comments',
+                { body: commentBody }
+              ).then(function() {
+                console.log('Posted new PR comment on PR #' + prNumber + '.');
+              });
+            }
+          })
+          .catch(function(err) {
+            console.error('::warning::PR comment step failed: ' + err.message);
+          });
+        NODE_SCRIPT
+
+    # ------------------------------------------------------------------
+    # Step 5: Enforce exit code based on verification result
+    # ------------------------------------------------------------------
+    - name: Enforce exit code
+      id: enforce-exit-code
+      shell: bash
+      run: |
+        RESULT_FILE="${MCP_VERIFY_RESULT_FILE}"
+
+        if [ ! -f "${RESULT_FILE}" ] || [ ! -s "${RESULT_FILE}" ]; then
+          echo "::error::mcp-verify result file missing or empty; treating as failure."
+          exit 2
+        fi
+
+        node - <<'NODE_SCRIPT'
+        const fs = require('fs');
+        const resultFile = process.env.MCP_VERIFY_RESULT_FILE;
+
+        let result;
+        try {
+          result = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+        } catch (err) {
+          console.error('::error::Could not parse result file: ' + err.message);
+          process.exit(2);
+        }
+
+        const exitCode = (result && result.summary && result.summary.exitCode != null)
+          ? result.summary.exitCode
+          : 2;
+        const pass = result && result.summary && result.summary.pass === true;
+
+        if (!pass) {
+          const score = (result && result.conformance && result.conformance.score != null)
+            ? result.conformance.score
+            : 0;
+          const findings = (result && result.security && Array.isArray(result.security.findings))
+            ? result.security.findings.length
+            : 0;
+          console.error(
+            '::error::MCP Verify FAILED' +
+            ' — conformance score: ' + score + '/100' +
+            ', active security findings: ' + findings
+          );
+        }
+
+        process.exit(exitCode);
+        NODE_SCRIPT
