@@ -1,0 +1,12 @@
+{
+  "name": "mcp-verify-custom-auth-check",
+  "version": "1.0.0",
+  "description": "Example mcp-verify plugin: checks for authentication mechanism in MCP server initialize response",
+  "type": "module",
+  "main": "index.js",
+  "keywords": ["mcp-verify", "plugin", "security", "authentication"],
+  "license": "MIT",
+  "peerDependencies": {
+    "mcp-verify": ">=1.0.0"
+  }
+}

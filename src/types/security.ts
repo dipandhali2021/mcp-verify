@@ -15,4 +15,8 @@ export interface SecurityFinding {
   evidence?: Record<string, unknown>;
   suppressed: boolean;
   justification?: string;
+  /** Whether this finding came from the built-in engine or a plugin. */
+  source?: 'builtin' | 'plugin';
+  /** Populated for plugin-sourced findings: the originating plugin's id. */
+  pluginId?: string;
 }
