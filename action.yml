@@ -2,6 +2,10 @@ name: 'MCP Verify'
 description: 'Verify MCP servers for spec conformance, security vulnerabilities, and health metrics'
 author: 'MCP Verify Contributors'
 
+branding:
+  icon: 'shield'
+  color: 'blue'
+
 inputs:
   target:
     description: 'MCP server URL or stdio command to verify'
