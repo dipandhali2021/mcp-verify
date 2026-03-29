@@ -9,6 +9,7 @@ import type {
 } from './types/index.js';
 import { createTransport } from './transport/index.js';
 import { executeProtocol } from './protocol/index.js';
+import type { ProgressEvent } from './protocol/index.js';
 import { runConformanceChecks } from './validators/conformance/index.js';
 import { computeScores, determineExitCode } from './scoring/index.js';
 import { runSecurityChecks } from './validators/security/index.js';
@@ -104,6 +105,71 @@ function formatComparisonOutput(comparison: ComparisonResult): string {
 }
 
 // ---------------------------------------------------------------------------
+// Progress display
+// ---------------------------------------------------------------------------
+
+const STEP_LABELS: Record<string, string> = {
+  'initialize':           'Initializing MCP handshake',
+  'initialized':          'Sending initialized notification',
+  'tools/list':           'Listing tools',
+  'resources/list':       'Listing resources',
+  'resources/read':       'Reading resource sample',
+  'prompts/list':         'Listing prompts',
+  'error-probe-unknown':  'Probing error handling (unknown method)',
+  'error-probe-malformed': 'Probing error handling (malformed JSON)',
+};
+
+const STATUS_ICONS: Record<string, string> = {
+  completed: '✓',
+  timeout:   '⏱',
+  error:     '✗',
+  skipped:   '–',
+};
+
+function createProgressHandler(isTTY: boolean, noColor: boolean): (event: ProgressEvent) => void {
+  // Only show live progress when outputting to a real terminal
+  // (not piped to a file or another process) and not in json/sarif format
+  if (!isTTY) {
+    return () => {};
+  }
+
+  const dim = noColor ? (s: string) => s : (s: string) => `\x1b[2m${s}\x1b[0m`;
+  const green = noColor ? (s: string) => s : (s: string) => `\x1b[32m${s}\x1b[0m`;
+  const red = noColor ? (s: string) => s : (s: string) => `\x1b[31m${s}\x1b[0m`;
+  const yellow = noColor ? (s: string) => s : (s: string) => `\x1b[33m${s}\x1b[0m`;
+
+  return (event: ProgressEvent) => {
+    const label = STEP_LABELS[event.step] ?? event.step;
+
+    if (event.phase === 'start') {
+      // Overwrite current line with spinner-style indicator
+      process.stderr.write(`\r\x1b[K  ◌ ${label}...`);
+    } else {
+      const icon = STATUS_ICONS[event.status ?? 'completed'] ?? '?';
+      const duration = event.durationMs !== undefined ? dim(` (${formatDuration(event.durationMs)})`) : '';
+
+      let coloredIcon: string;
+      if (event.status === 'completed') {
+        coloredIcon = green(icon);
+      } else if (event.status === 'timeout') {
+        coloredIcon = yellow(icon);
+      } else if (event.status === 'error') {
+        coloredIcon = red(icon);
+      } else {
+        coloredIcon = dim(icon);
+      }
+
+      process.stderr.write(`\r\x1b[K  ${coloredIcon} ${label}${duration}\n`);
+    }
+  };
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+// ---------------------------------------------------------------------------
 // Full verification pipeline
 // ---------------------------------------------------------------------------
 
@@ -130,8 +196,20 @@ async function runVerification(
   }
 
   try {
+    // Set up live progress for terminal users
+    const isTTY = process.stderr.isTTY === true && config.format === 'terminal';
+    const onProgress = createProgressHandler(isTTY, config.noColor);
+
+    if (isTTY) {
+      process.stderr.write(`\n  Verifying ${config.target}\n\n`);
+    }
+
     // 2. Execute protocol — partial failures are captured inside the record
-    const exchange = await executeProtocol(transport, config);
+    const exchange = await executeProtocol(transport, config, onProgress);
+
+    if (isTTY) {
+      process.stderr.write(`\n`);
+    }
 
     // 3. Run conformance checks
     const checkResults = runConformanceChecks(exchange, config);

@@ -1,4 +1,5 @@
 export { executeProtocol } from './engine.js';
+export type { ProgressEvent, OnProgress } from './engine.js';
 export {
   createInitializeRequest,
   createInitializedNotification,

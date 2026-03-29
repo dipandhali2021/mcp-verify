@@ -31,6 +31,19 @@ const TOOLS_CAP = 500;
 // ---------------------------------------------------------------------------
 
 /**
+ * Progress callback fired before and after each protocol step.
+ */
+export interface ProgressEvent {
+  step: ProtocolStep;
+  phase: 'start' | 'done';
+  status?: 'completed' | 'timeout' | 'error' | 'skipped';
+  durationMs?: number;
+  detail?: string;
+}
+
+export type OnProgress = (event: ProgressEvent) => void;
+
+/**
  * Execute the full MCP verification protocol against an already-connected
  * transport, recording every exchange in a `ProtocolExchangeRecord`.
  *
@@ -41,6 +54,7 @@ const TOOLS_CAP = 500;
 export async function executeProtocol(
   transport: Transport,
   config: VerificationConfig,
+  onProgress?: OnProgress,
 ): Promise<ProtocolExchangeRecord> {
   const errors: ProtocolExchangeRecord['errors'] = [];
   const stepResults: Partial<Record<ProtocolStep, StepResult>> = {};
@@ -58,6 +72,7 @@ export async function executeProtocol(
       'initialize',
       () => transport.send(initRequest),
       config,
+      onProgress,
     );
     stepResults['initialize'] = stepResult;
     initResponse = result;
@@ -77,20 +92,18 @@ export async function executeProtocol(
   // succeeded — if the process is still alive we should close the handshake.
   let initializedSent = false;
   {
+    onProgress?.({ step: 'initialized', phase: 'start' });
     const start = Date.now();
     try {
       await transport.notify(createInitializedNotification());
       initializedSent = true;
-      stepResults['initialized'] = {
-        status: 'completed',
-        durationMs: Date.now() - start,
-      };
+      const durationMs = Date.now() - start;
+      stepResults['initialized'] = { status: 'completed', durationMs };
+      onProgress?.({ step: 'initialized', phase: 'done', status: 'completed', durationMs });
     } catch (err) {
-      stepResults['initialized'] = {
-        status: 'error',
-        durationMs: Date.now() - start,
-        error: String(err),
-      };
+      const durationMs = Date.now() - start;
+      stepResults['initialized'] = { status: 'error', durationMs, error: String(err) };
+      onProgress?.({ step: 'initialized', phase: 'done', status: 'error', durationMs });
     }
   }
 
@@ -117,6 +130,7 @@ export async function executeProtocol(
         'tools/list',
         () => transport.send(req),
         config,
+        onProgress,
       );
 
       // Record the first page's step result; subsequent pages do not overwrite
@@ -175,6 +189,7 @@ export async function executeProtocol(
       'resources/list',
       () => transport.send(createResourcesListRequest()),
       config,
+      onProgress,
     );
     stepResults['resources/list'] = stepResult;
     resourcesListResponse = result;
@@ -207,6 +222,7 @@ export async function executeProtocol(
         'resources/read',
         () => transport.send(createResourceReadRequest(uri)),
         config,
+        onProgress,
       );
       stepResults['resources/read'] = stepResult;
       resourceReadResponse = result;
@@ -234,6 +250,7 @@ export async function executeProtocol(
       'prompts/list',
       () => transport.send(createPromptsListRequest()),
       config,
+      onProgress,
     );
     stepResults['prompts/list'] = stepResult;
     promptsListResponse = result;
@@ -266,6 +283,7 @@ export async function executeProtocol(
       'error-probe-unknown',
       () => transport.send(req),
       config,
+      onProgress,
     );
     stepResults['error-probe-unknown'] = stepResult;
     unknownMethodProbeResponse = result;
@@ -280,6 +298,7 @@ export async function executeProtocol(
       'error-probe-malformed',
       () => transport.sendRaw('{ invalid json %%%'),
       config,
+      onProgress,
     );
     stepResults['error-probe-malformed'] = stepResult;
     malformedJsonProbeResponse = result;
@@ -341,19 +360,23 @@ interface StepRunResult<T> {
  * errors into StepResult entries rather than propagating them.
  */
 async function runStep<T>(
-  _step: ProtocolStep,
+  step: ProtocolStep,
   fn: () => Promise<T>,
   _config: VerificationConfig,
+  onProgress?: OnProgress,
 ): Promise<StepRunResult<T>> {
+  onProgress?.({ step, phase: 'start' });
   const start = Date.now();
 
   try {
     const result = await fn();
+    const durationMs = Date.now() - start;
+    onProgress?.({ step, phase: 'done', status: 'completed', durationMs });
     return {
       result,
       stepResult: {
         status: 'completed',
-        durationMs: Date.now() - start,
+        durationMs,
       },
     };
   } catch (err) {
@@ -361,12 +384,15 @@ async function runStep<T>(
     const isTimeout =
       message.toLowerCase().includes('timeout') ||
       message.toLowerCase().includes('timed out');
+    const durationMs = Date.now() - start;
+    const status = isTimeout ? 'timeout' : 'error';
 
+    onProgress?.({ step, phase: 'done', status, durationMs });
     return {
       result: null,
       stepResult: {
-        status: isTimeout ? 'timeout' : 'error',
-        durationMs: Date.now() - start,
+        status,
+        durationMs,
         error: message,
       },
     };
