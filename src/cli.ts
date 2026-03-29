@@ -14,8 +14,9 @@ import { computeScores, determineExitCode } from './scoring/index.js';
 import { runSecurityChecks } from './validators/security/index.js';
 import { createReporter } from './reporters/index.js';
 import { loadConfigFile, mergeConfig } from './config/index.js';
-import { HistoryStorage } from './history/index.js';
-import type { HistoryRecord } from './history/index.js';
+import { HistoryStorage, compareRuns, saveBaseline, getBaseline } from './history/index.js';
+import type { HistoryRecord, ComparisonResult } from './history/index.js';
+import { startDashboard } from './dashboard/index.js';
 
 // ---------------------------------------------------------------------------
 // Exit codes
@@ -61,10 +62,59 @@ function countBySeverity(findings: SecurityFinding[]): Record<string, number> {
 }
 
 // ---------------------------------------------------------------------------
+// Comparison output formatting
+// ---------------------------------------------------------------------------
+
+function formatComparisonOutput(comparison: ComparisonResult): string {
+  const lines: string[] = [];
+  lines.push('');
+  lines.push('=== Comparison with Previous Run ===');
+  lines.push('');
+
+  const deltaSign = comparison.scoreDelta > 0 ? '+' : '';
+  lines.push(`  Score:    ${comparison.previousScore} -> ${comparison.currentScore} (${deltaSign}${comparison.scoreDelta})`);
+  lines.push(`  Findings: ${comparison.previousFindingsCount} -> ${comparison.currentFindingsCount}`);
+
+  if (comparison.isRegression) {
+    lines.push('  Status:   REGRESSION');
+  } else if (comparison.scoreDelta > 0) {
+    lines.push('  Status:   IMPROVEMENT');
+  } else {
+    lines.push('  Status:   NO CHANGE');
+  }
+
+  if (comparison.newFindings.length > 0) {
+    lines.push('');
+    lines.push(`  New findings (${comparison.newFindings.length}):`);
+    for (const f of comparison.newFindings) {
+      lines.push(`    + ${f}`);
+    }
+  }
+
+  if (comparison.resolvedFindings.length > 0) {
+    lines.push('');
+    lines.push(`  Resolved findings (${comparison.resolvedFindings.length}):`);
+    for (const f of comparison.resolvedFindings) {
+      lines.push(`    - ${f}`);
+    }
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Full verification pipeline
 // ---------------------------------------------------------------------------
 
-async function runVerification(config: VerificationConfig): Promise<void> {
+async function runVerification(
+  config: VerificationConfig,
+  compareOptions: {
+    compareLast?: boolean;
+    comparePrevious?: boolean;
+    saveAsBaseline?: boolean;
+  } = {},
+): Promise<void> {
   const startTime = Date.now();
 
   // 1. Create transport — transport errors exit with code 2
@@ -122,12 +172,61 @@ async function runVerification(config: VerificationConfig): Promise<void> {
       },
     };
 
-    // 7. Format and output
+    // 7. Build the history record for this run
+    const historyRecord: HistoryRecord = {
+      timestamp: result.meta.timestamp,
+      target: config.target,
+      conformanceScore: result.conformance.score,
+      securityFindingsCount: result.security.findings.length,
+      breakdown: result.conformance.breakdown,
+      toolVersion: result.meta.toolVersion,
+      specVersion: result.meta.specVersion,
+    };
+
+    // 8. Determine comparison baseline (before appending this run)
+    let comparisonResult: ComparisonResult | null = null;
+    const shouldCompare = compareOptions.compareLast === true || compareOptions.comparePrevious === true;
+
+    if (shouldCompare) {
+      const historyStorage = new HistoryStorage();
+      let previousRecord: HistoryRecord | null = null;
+
+      if (compareOptions.comparePrevious === true) {
+        // Bypass baseline — always use the most recent history entry
+        previousRecord = historyStorage.getLatestRun(config.target);
+      } else {
+        // --compare-last: prefer baseline if one exists, else use latest run
+        const baseline = getBaseline(config.target);
+        previousRecord = baseline ?? historyStorage.getLatestRun(config.target);
+      }
+
+      if (previousRecord !== null) {
+        comparisonResult = compareRuns(
+          previousRecord,
+          historyRecord,
+          // SecurityFinding details are not stored in HistoryRecord, so we
+          // pass empty arrays — count-based comparison still works correctly.
+          [],
+          result.security.findings,
+        );
+      }
+    }
+
+    // 9. Format and output
     const reporter = createReporter(config);
 
     if (config.output !== null) {
-      // Write the formatted report (in requested format) to the output file
-      const fileReport = reporter.format(result);
+      // Produce the formatted report content
+      let fileReport: string;
+      if (config.format === 'json' && comparisonResult !== null && compareOptions.compareLast === true) {
+        // Inject comparison data into the JSON report
+        const base = JSON.parse(reporter.format(result)) as Record<string, unknown>;
+        base['comparison'] = comparisonResult;
+        fileReport = JSON.stringify(base, null, 2);
+      } else {
+        fileReport = reporter.format(result);
+      }
+
       try {
         writeFileSync(config.output, fileReport, 'utf-8');
       } catch (err: unknown) {
@@ -151,22 +250,27 @@ async function runVerification(config: VerificationConfig): Promise<void> {
       process.stdout.write(output + '\n');
     }
 
-    // 8. Persist run to history (unless --no-history was set)
+    // 10. Print comparison section to stdout (after report output)
+    if (shouldCompare) {
+      if (comparisonResult !== null) {
+        process.stdout.write(formatComparisonOutput(comparisonResult));
+      } else {
+        process.stdout.write(`\nNo previous run found for ${config.target}\n`);
+      }
+    }
+
+    // 11. Persist run to history (unless --no-history was set)
     if (!config.noHistory) {
-      const historyRecord: HistoryRecord = {
-        timestamp: result.meta.timestamp,
-        target: config.target,
-        conformanceScore: result.conformance.score,
-        securityFindingsCount: result.security.findings.length,
-        breakdown: result.conformance.breakdown,
-        toolVersion: result.meta.toolVersion,
-        specVersion: result.meta.specVersion,
-      };
       const historyStorage = new HistoryStorage();
       historyStorage.appendRun(config.target, historyRecord);
     }
 
-    // 9. Exit with appropriate code
+    // 12. Optionally save as baseline
+    if (compareOptions.saveAsBaseline === true) {
+      saveBaseline(config.target, historyRecord);
+    }
+
+    // 13. Exit with appropriate code
     process.exit(exitCode);
   } finally {
     await transport.close();
@@ -226,6 +330,16 @@ export function parseConformanceThreshold(value: string): number {
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > 100) {
     throw new InvalidArgumentError(
       `--conformance-threshold must be an integer between 0 and 100 (got: ${value})`,
+    );
+  }
+  return parsed;
+}
+
+export function parsePort(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    throw new InvalidArgumentError(
+      `--port must be an integer between 1 and 65535 (got: ${value})`,
     );
   }
   return parsed;
@@ -336,6 +450,14 @@ Examples:
       DEFAULT_CONFIG.conformanceThreshold,
     )
     .option('--no-history', 'Skip saving this run to history storage')
+    .option(
+      '--compare-last',
+      'After verification, compare with baseline (if set) or the previous run',
+    )
+    .option(
+      '--compare-previous',
+      'After verification, compare with immediately previous run (bypasses baseline)',
+    )
     .addHelpText(
       'after',
       `
@@ -344,6 +466,8 @@ Examples:
   mcp-verify verify https://example.com/mcp --format json
   mcp-verify verify ./my-server --timeout 30000
   mcp-verify verify https://example.com/mcp --no-color --format sarif
+  mcp-verify verify https://example.com/mcp --compare-last
+  mcp-verify verify https://example.com/mcp --compare-previous
 `,
     );
 
@@ -365,6 +489,8 @@ Examples:
         failOnSeverity: 'critical' | 'high' | 'medium' | 'low' | 'none';
         conformanceThreshold: number;
         history: boolean;
+        compareLast?: boolean;
+        comparePrevious?: boolean;
       },
     ) => {
       // Mutual exclusion: --strict and --lenient cannot both be set
@@ -414,7 +540,10 @@ Examples:
       const config = mergeConfig(cliOptions, fileConfig, target);
 
       try {
-        await runVerification(config);
+        await runVerification(config, {
+          compareLast: options.compareLast === true,
+          comparePrevious: options.comparePrevious === true,
+        });
       } catch (err: unknown) {
         exitWithError(
           err instanceof Error ? err.message : String(err),
@@ -424,6 +553,290 @@ Examples:
       }
     },
   );
+
+  // ---------------------------------------------------------------------------
+  // baseline command (FR-073)
+  // ---------------------------------------------------------------------------
+
+  const baselineCmd = program
+    .command('baseline <target>')
+    .description('Run verification and store the result as a baseline for <target>')
+    .option(
+      '--existing',
+      'Promote the most recent history entry as baseline without running verification',
+    )
+    .option(
+      '--timeout <ms>',
+      'Connection and response timeout in milliseconds',
+      parseTimeout,
+      DEFAULT_CONFIG.timeout,
+    )
+    .option('--no-color', 'Disable colored output')
+    .option(
+      '--format <type>',
+      'Output format: terminal | json | markdown | sarif',
+      parseFormat,
+      DEFAULT_CONFIG.format,
+    )
+    .option(
+      '--config <path>',
+      'Path to config file (default: auto-discover mcp-verify.json or .mcp-verify.json)',
+    )
+    .option('--strict', 'Set check mode to strict')
+    .option('--lenient', 'Set check mode to lenient')
+    .option('--verbose', 'Enable verbose output')
+    .option(
+      '--output <path>',
+      'Write formatted report to file instead of stdout',
+    )
+    .option(
+      '--transport <type>',
+      'Force transport type: http | stdio',
+      parseTransport,
+    )
+    .option(
+      '--fail-on-severity <level>',
+      'Minimum severity level to fail on: critical | high | medium | low | none',
+      parseFailOnSeverity,
+      DEFAULT_CONFIG.failOnSeverity,
+    )
+    .option(
+      '--conformance-threshold <score>',
+      'Minimum conformance score (0–100)',
+      parseConformanceThreshold,
+      DEFAULT_CONFIG.conformanceThreshold,
+    )
+    .addHelpText(
+      'after',
+      `
+Examples:
+  mcp-verify baseline https://example.com/mcp
+  mcp-verify baseline --existing https://example.com/mcp
+`,
+    );
+
+  applyExitOverride(baselineCmd);
+
+  baselineCmd.action(
+    async (
+      target: string,
+      options: {
+        existing?: boolean;
+        timeout: number;
+        color: boolean;
+        format: 'terminal' | 'json' | 'markdown' | 'sarif';
+        config?: string;
+        strict?: boolean;
+        lenient?: boolean;
+        verbose?: boolean;
+        output?: string;
+        transport?: 'http' | 'stdio';
+        failOnSeverity: 'critical' | 'high' | 'medium' | 'low' | 'none';
+        conformanceThreshold: number;
+      },
+    ) => {
+      if (options.existing === true) {
+        // Promote the latest history entry to baseline without running verification
+        const historyStorage = new HistoryStorage();
+        const latest = historyStorage.getLatestRun(target);
+
+        if (latest === null) {
+          process.stderr.write(
+            `Error: No history found for "${target}". Run a verification first.\n`,
+          );
+          process.exit(ExitCode.ERROR);
+        }
+
+        try {
+          saveBaseline(target, latest);
+        } catch (err: unknown) {
+          exitWithError(
+            err instanceof Error ? err.message : String(err),
+            options.verbose === true,
+            err,
+          );
+        }
+
+        process.stdout.write(
+          `Baseline saved for "${target}" (score: ${latest.conformanceScore}, timestamp: ${latest.timestamp})\n`,
+        );
+        process.exit(ExitCode.PASS);
+      }
+
+      // Run full verification pipeline, then save result as baseline
+      if (options.strict && options.lenient) {
+        process.stderr.write(
+          'Error: --strict and --lenient are mutually exclusive\n',
+        );
+        process.exit(ExitCode.ERROR);
+      }
+
+      let checkMode: 'strict' | 'balanced' | 'lenient' | undefined;
+      if (options.strict) {
+        checkMode = 'strict';
+      } else if (options.lenient) {
+        checkMode = 'lenient';
+      }
+
+      const fileConfig = loadConfigFile(options.config);
+
+      const cliOptions: Partial<Omit<VerificationConfig, 'target'>> = {
+        timeout: options.timeout,
+        noColor: !options.color,
+        format: options.format,
+        failOnSeverity: options.failOnSeverity,
+        conformanceThreshold: options.conformanceThreshold,
+      };
+
+      if (checkMode !== undefined) {
+        cliOptions.checkMode = checkMode;
+      }
+      if (options.verbose === true) {
+        cliOptions.verbose = true;
+      }
+      if (options.output !== undefined) {
+        cliOptions.output = options.output;
+      }
+      if (options.transport !== undefined) {
+        cliOptions.transport = options.transport;
+      }
+
+      const config = mergeConfig(cliOptions, fileConfig, target);
+
+      try {
+        await runVerification(config, { saveAsBaseline: true });
+      } catch (err: unknown) {
+        exitWithError(
+          err instanceof Error ? err.message : String(err),
+          config.verbose,
+          err,
+        );
+      }
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // history command group (FR-072 export sub-feature)
+  // ---------------------------------------------------------------------------
+
+  const historyCmd = program
+    .command('history')
+    .description('Manage run history');
+
+  applyExitOverride(historyCmd);
+
+  const historyExportCmd = historyCmd
+    .command('export [target]')
+    .description('Export run history as JSON')
+    .option('--all', 'Export history for all tracked targets')
+    .option(
+      '--output <path>',
+      'Write exported history to a file instead of stdout',
+    )
+    .addHelpText(
+      'after',
+      `
+Examples:
+  mcp-verify history export https://example.com/mcp --output history.json
+  mcp-verify history export --all --output all-history.json
+`,
+    );
+
+  applyExitOverride(historyExportCmd);
+
+  historyExportCmd.action(
+    (
+      target: string | undefined,
+      options: {
+        all?: boolean;
+        output?: string;
+      },
+    ) => {
+      const historyStorage = new HistoryStorage();
+
+      if (options.all !== true && (target === undefined || target.trim() === '')) {
+        process.stderr.write(
+          'Error: Provide a <target> argument or use --all to export all targets\n',
+        );
+        process.exit(ExitCode.ERROR);
+      }
+
+      let records: HistoryRecord[];
+      let targetsExported: string[];
+
+      if (options.all === true) {
+        targetsExported = historyStorage.getAllTargets();
+        records = targetsExported.flatMap((t) => historyStorage.getHistory(t));
+      } else {
+        // target is guaranteed non-empty here
+        const t = target as string;
+        targetsExported = [t];
+        records = historyStorage.getHistory(t);
+      }
+
+      const exportPayload = {
+        exportedAt: new Date().toISOString(),
+        toolVersion: '1.0.0',
+        targets: targetsExported,
+        runs: records,
+      };
+
+      const json = JSON.stringify(exportPayload, null, 2) + '\n';
+
+      if (options.output !== undefined) {
+        try {
+          writeFileSync(options.output, json, 'utf-8');
+        } catch (err: unknown) {
+          exitWithError(
+            `Failed to write output file "${options.output}": ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        process.stdout.write(`History exported to "${options.output}"\n`);
+      } else {
+        process.stdout.write(json);
+      }
+
+      process.exit(ExitCode.PASS);
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // serve command (S-4-04, FR-066)
+  // ---------------------------------------------------------------------------
+
+  const serveCmd = program
+    .command('serve')
+    .description('Start the local web dashboard')
+    .option(
+      '--port <number>',
+      'Port to listen on (default: 4000)',
+      parsePort,
+      4000,
+    )
+    .addHelpText(
+      'after',
+      `
+Examples:
+  mcp-verify serve
+  mcp-verify serve --port 8080
+`,
+    );
+
+  applyExitOverride(serveCmd);
+
+  serveCmd.action(async (options: { port: number }) => {
+    try {
+      await startDashboard(options.port);
+      // Keep the process alive until SIGINT (handled inside startDashboard)
+      await new Promise<void>(() => {
+        /* intentionally never resolves — server runs until SIGINT */
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`Error: ${message}\n`);
+      process.exit(ExitCode.ERROR);
+    }
+  });
 
   return program;
 }
