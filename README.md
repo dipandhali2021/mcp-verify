@@ -5,7 +5,7 @@ A framework-agnostic CLI and GitHub Action that verifies [MCP (Model Context Pro
 ```
 $ npx mcp-server-verify https://your-mcp-server.com/mcp
 
-  MCP Verify 1.1.0 — MCP spec 2024-11-05
+  MCP Verify 1.2.2 — MCP spec 2024-11-05
 
   Target:    https://your-mcp-server.com/mcp
   Transport: http
@@ -38,8 +38,11 @@ $ npx mcp-server-verify https://your-mcp-server.com/mcp
 - **Historical Tracking** — Score history, baselines, regression detection
 - **Web Dashboard** — Local dashboard with charts, trends, and portfolio view
 - **Plugin System** — Extend with custom checks via JavaScript plugins
+- **Live Progress Indicator** — Real-time feedback during verification
+- **Smart Transport Detection** — Auto-detects HTTP, stdio, and npm package targets
+- **Custom Auth Headers** — Support for Bearer tokens, API keys, and custom headers
 - **Zero Config** — Works out of the box with sensible defaults
-- **Lightweight** — ~148 KB bundle, no heavy dependencies
+- **Lightweight** — ~111 KB bundle, no heavy dependencies
 
 ## Quick Start
 
@@ -49,6 +52,12 @@ npx mcp-server-verify https://your-server.com/mcp
 
 # Verify a stdio MCP server
 npx mcp-server-verify stdio://./my-server.js
+
+# Verify an npm package MCP server (auto-detected)
+npx mcp-server-verify @anthropic/mcp-server-example
+
+# With custom auth header
+npx mcp-server-verify https://your-server.com/mcp --header "Authorization: Bearer token123"
 
 # JSON output for CI
 npx mcp-server-verify https://your-server.com/mcp --format json
@@ -165,7 +174,8 @@ mcp-verify verify <target> [options]
 | `--lenient` | Lenient check mode (fewer checks, relaxed thresholds) | off |
 | `--verbose` | Show detailed error output with stack traces | off |
 | `--output <path>` | Write report to file instead of stdout | stdout |
-| `--transport <type>` | Force transport: `http` or `stdio` | auto-detect |
+| `--transport <type>` | Force transport: `http`, `stdio`, or `npm` | auto-detect |
+| `--header <header>` | Custom HTTP header (can be used multiple times) | — |
 | `--fail-on-severity <level>` | Fail on findings at this level or above: `critical`, `high`, `medium`, `low`, `none` | `critical` |
 | `--conformance-threshold <n>` | Minimum conformance score (0-100) to pass | `0` |
 | `--no-color` | Disable ANSI color output | off |
@@ -191,7 +201,25 @@ mcp-verify https://example.com/mcp --compare-last
 
 # Strict mode, verbose errors
 mcp-verify https://example.com/mcp --strict --verbose
+
+# Custom auth headers
+mcp-verify https://example.com/mcp --header "Authorization: Bearer mytoken"
+mcp-verify https://example.com/mcp --header "X-API-Key: abc123" --header "X-Tenant: acme"
+
+# Verify npm package server (auto-spawns via npx)
+mcp-verify @anthropic/mcp-server-filesystem
 ```
+
+### Smart Transport Auto-Detection
+
+MCP Verify automatically detects the target type:
+
+| Target Pattern | Detected Transport |
+|----------------|-------------------|
+| `http://` or `https://` | HTTP+SSE |
+| `stdio://path/to/server.js` | stdio |
+| `@scope/package-name` or `package-name` | npm (spawns via npx) |
+| `./path/to/server.js` | stdio |
 
 ### baseline Command
 
@@ -290,7 +318,7 @@ Structured output for CI pipelines and programmatic consumption:
 {
   "schemaVersion": "1.0",
   "meta": {
-    "toolVersion": "1.1.0",
+    "toolVersion": "1.2.2",
     "specVersion": "2024-11-05",
     "timestamp": "2026-03-29T12:00:00.000Z",
     "target": "https://example.com/mcp",
